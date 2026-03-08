@@ -1,0 +1,39 @@
+{
+  "name": "soul-core",
+  "version": "0.1.0",
+  "description": "Engine-agnostic autonomous NPC persona simulation runtime core",
+  "type": "module",
+  "license": "Apache-2.0",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./state": {
+      "import": "./dist/state.js",
+      "types": "./dist/state.d.ts"
+    },
+    "./seed": {
+      "import": "./dist/seed.js",
+      "types": "./dist/seed.d.ts"
+    },
+    "./trace": {
+      "import": "./dist/trace.js",
+      "types": "./dist/trace.d.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run build"
+  },
+  "devDependencies": {
+    "tsup": "^8.4.0",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.0"
+  }
+}
