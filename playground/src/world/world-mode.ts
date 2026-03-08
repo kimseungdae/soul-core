@@ -10,15 +10,28 @@ import {
   type WorldEvent,
 } from "soul-core";
 import { AGENT_DEFS } from "./agents";
-import { createCamera, renderWorld, TILE_SIZE, type Camera } from "./renderer";
+import {
+  createCamera,
+  renderWorld,
+  TILE_SIZE,
+  type Camera,
+  createVisualState,
+  type VisualState,
+  snapshotPositions,
+  tickVisuals,
+  addBubble,
+  addInteraction,
+} from "./renderer";
 
 // --- State ---
 
 let world: WorldSimState;
 let camera: Camera;
+let vs: VisualState;
 let running = false;
 let timerId: number | null = null;
 let animFrameId: number | null = null;
+let lastFrameTime = 0;
 
 // --- DOM ---
 
@@ -94,6 +107,8 @@ export function initWorldMode() {
   loadPrototypePatterns();
   world = createWorldState(AGENT_DEFS);
   camera = createCamera();
+  vs = createVisualState();
+  snapshotPositions(vs, world.agents);
 
   resizeCanvas();
   buildNpcList();
@@ -138,11 +153,15 @@ function resizeCanvas() {
 }
 
 function startRenderLoop() {
-  function frame() {
-    renderWorld(ctx, world, camera, worldCanvas.width, worldCanvas.height);
+  lastFrameTime = performance.now();
+  function frame(now: number) {
+    const dt = Math.min(0.1, (now - lastFrameTime) / 1000);
+    lastFrameTime = now;
+    tickVisuals(vs, dt);
+    renderWorld(ctx, world, camera, worldCanvas.width, worldCanvas.height, vs);
     animFrameId = requestAnimationFrame(frame);
   }
-  frame();
+  animFrameId = requestAnimationFrame(frame);
 }
 
 // --- Simulation ---
@@ -172,7 +191,63 @@ function restartTimer() {
   if (timerId !== null) clearInterval(timerId);
   const interval = +speedInput.value;
   timerId = window.setInterval(() => {
+    // Snapshot positions before tick for lerp
+    snapshotPositions(vs, world.agents);
+
     const events = worldTick(world);
+
+    // Update lerp targets after tick
+    for (const a of world.agents) {
+      const l = vs.lerps.get(a.id);
+      if (l) {
+        l.toX = a.x;
+        l.toY = a.y;
+      }
+    }
+    vs.lerpProgress = 0;
+
+    // Add visual effects for events
+    for (const ev of events) {
+      const agent = world.agents.find((a) => a.id === ev.agentId);
+      if (!agent) continue;
+
+      if (ev.type === "social") {
+        // Find the other agent mentioned in description
+        const other = world.agents.find(
+          (a) => a.id !== agent.id && ev.descriptionKo.includes(a.nameKo),
+        );
+        if (other) {
+          addInteraction(vs, agent.id, other.id, "#7c8aff");
+        }
+        addBubble(
+          vs,
+          agent.x,
+          agent.y,
+          ev.descriptionKo.slice(0, 20),
+          "💬",
+          "#7c8aff",
+        );
+      } else if (ev.type === "combat") {
+        addBubble(
+          vs,
+          agent.x,
+          agent.y,
+          ev.descriptionKo.slice(0, 20),
+          "⚔️",
+          "#ff6b6b",
+        );
+      } else if (ev.type === "routine") {
+        addBubble(
+          vs,
+          agent.x,
+          agent.y,
+          ev.descriptionKo.slice(0, 15),
+          agent.emoji,
+          "#4ecdc4",
+        );
+      }
+    }
+
     updateTimeDisplay();
     updateNpcList();
     addEventsToLog(events);
@@ -186,6 +261,8 @@ function resetWorld() {
   timerId = null;
   world = createWorldState(AGENT_DEFS);
   camera = createCamera();
+  vs = createVisualState();
+  snapshotPositions(vs, world.agents);
   startBtn.style.display = "block";
   startBtn.textContent = "시작";
   pauseBtn.style.display = "none";
