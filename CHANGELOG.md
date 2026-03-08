@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.4.0] - 2026-03-08
+
+### Added
+
+- World Simulator module (`src/world/`) for multi-agent tile-based village simulation
+- 64x64 tile map village generator with buildings, river, bridge, dungeon, forest zones
+- A\* pathfinding for NPC navigation between locations
+- Multi-agent scheduler: 8 NPCs with daily schedules, autonomous goal-based behavior
+- Monster system: 7 monsters (wolves, goblins, skeleton, bandit) with territory patrol and respawn
+- Social interaction system: automatic NPC-NPC encounters with soul-core personality processing
+- Combat system: NPC-monster encounters outside village with soul-core decision pipeline
+- Routine behavior system: location-based activities (tavern=eating, library=studying, etc.)
+- Day/night cycle with 48 ticks per day (30 min/tick)
+- Canvas 2D renderer: tile map, NPC sprites with emoji, monster sprites, HP bars, location labels
+- Camera system: WASD/arrow key scrolling, mouse wheel zoom, click-to-select NPC
+- Minimap (64x64 overview) with agent/monster dots and viewport rectangle
+- Night overlay with dawn/dusk transitions
+- World mode tab in playground with simulation controls, NPC list, state panel, event log
+- 8 unique NPCs: Kael (warrior), Lyra (scholar), Vex (rogue), Elena (healer), Bjorn (blacksmith), Mira (merchant), Theron (sage), Finn (apprentice)
+- All Korean UI: building names, NPC names, activities, event descriptions, controls
+
 ## [0.3.0] - 2026-03-08
 
 ### Added
