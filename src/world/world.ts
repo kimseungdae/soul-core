@@ -30,6 +30,14 @@ export function createWorldState(
   const agents = agentDefs.map((def) => createAgent(def, mapData.locations));
   const monsters = createMonsters();
 
+  // Start at midnight → agents should be sleeping at home
+  for (const agent of agents) {
+    agent.sleeping = true;
+    agent.currentGoal = "sleeping";
+    agent.currentGoalKo = "수면 중";
+    agent.emoji = "💤";
+  }
+
   return {
     config: cfg,
     tiles: mapData.tiles,
@@ -279,10 +287,30 @@ function processAgent(
     agent.x = next.x;
     agent.y = next.y;
     agent.pathIndex++;
+
+    // Arrived at home → start sleeping
+    if (
+      agent.currentGoal === "going_home" &&
+      agent.pathIndex >= agent.path.length
+    ) {
+      agent.currentGoal = "sleeping";
+      agent.currentGoalKo = "수면 중";
+      agent.sleeping = true;
+    }
+  } else if (agent.currentGoal === "going_home") {
+    // Already at home location → sleep immediately
+    agent.currentGoal = "sleeping";
+    agent.currentGoalKo = "수면 중";
+    agent.sleeping = true;
   } else if (!agent.sleeping) {
     // Arrived at destination or no path - do routine behavior
     const routineEvent = handleRoutine(world, agent, hour, timeOfDay);
     if (routineEvent) events.push(routineEvent);
+  }
+
+  // Enforce sleep emoji
+  if (agent.sleeping) {
+    agent.emoji = "💤";
   }
 
   return events;
@@ -296,14 +324,20 @@ function updateGoal(world: WorldState, agent: WorldAgent, hour: number) {
   if (!scheduled) {
     // Default: go home and sleep at night
     if (hour >= 22 || hour < 5) {
-      if (agent.currentGoal !== "sleeping") {
-        agent.currentGoal = "sleeping";
-        agent.currentGoalKo = "수면 중";
-        agent.sleeping = true;
+      if (
+        agent.currentGoal !== "sleeping" &&
+        agent.currentGoal !== "going_home"
+      ) {
+        agent.currentGoal = "going_home";
+        agent.currentGoalKo = "귀가 중";
+        agent.sleeping = false;
         navigateTo(world, agent, agent.homeLocationId);
       }
     } else {
-      if (agent.currentGoal === "sleeping") {
+      if (
+        agent.currentGoal === "sleeping" ||
+        agent.currentGoal === "going_home"
+      ) {
         agent.sleeping = false;
         agent.currentGoal = "idle";
         agent.currentGoalKo = "자유 시간";
