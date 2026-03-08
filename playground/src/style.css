@@ -568,3 +568,234 @@ header h1 {
   background: #2a2a3a;
   border-radius: 3px;
 }
+
+/* ========== World Mode ========== */
+
+.world-layout {
+  display: grid;
+  grid-template-columns: 260px 1fr 300px;
+  height: calc(100vh - 53px);
+  gap: 1px;
+  background: #1a1a2a;
+}
+
+.world-sidebar {
+  overflow-y: auto;
+}
+
+.world-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.world-time-display {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 8px;
+  background: #12121a;
+  border-radius: 6px;
+}
+
+#world-day {
+  color: #7c8aff;
+}
+
+#world-time {
+  color: #ff9f43;
+  font-size: 18px;
+  font-family: inherit;
+}
+
+.world-speed-row label {
+  font-size: 11px;
+  color: #888;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.world-speed-row input[type="range"] {
+  flex: 1;
+  accent-color: #7c8aff;
+}
+
+/* NPC List */
+.npc-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.npc-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: #12121a;
+  border: 1px solid #2a2a3a;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-size: 12px;
+}
+
+.npc-card:hover {
+  background: #1a1a2a;
+  border-color: #4a4a6a;
+}
+
+.npc-card.selected {
+  border-color: #7c8aff;
+  background: #1a1a40;
+}
+
+.npc-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.npc-card .npc-name {
+  color: #ddd;
+  font-weight: 600;
+  flex: 1;
+}
+
+.npc-card .npc-emoji {
+  font-size: 14px;
+}
+
+.npc-card .npc-activity {
+  color: #666;
+  font-size: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 80px;
+}
+
+/* World Map */
+.world-map-panel {
+  position: relative;
+  overflow: hidden;
+  padding: 0 !important;
+  display: flex;
+  flex-direction: column;
+}
+
+#world-canvas {
+  flex: 1;
+  width: 100%;
+  cursor: grab;
+}
+
+#world-canvas:active {
+  cursor: grabbing;
+}
+
+.world-info-bar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 6px 12px;
+  background: rgba(10, 10, 15, 0.85);
+  font-size: 11px;
+  color: #666;
+  text-align: center;
+}
+
+/* World State Panel */
+.world-state-panel {
+  overflow-y: auto;
+}
+
+#world-npc-detail {
+  min-height: 60px;
+}
+
+.npc-detail-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.npc-detail-emoji {
+  font-size: 24px;
+}
+
+.npc-detail-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #ddd;
+}
+
+.npc-detail-role {
+  font-size: 11px;
+  color: #888;
+}
+
+.npc-detail-goal {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  background: #1a1a2a;
+  border-radius: 4px;
+  font-size: 11px;
+  color: #aaa;
+}
+
+.npc-detail-goal .goal-label {
+  color: #666;
+}
+
+/* Event Log */
+.event-log {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.event-log-entry {
+  padding: 5px 8px;
+  background: #12121a;
+  border-radius: 4px;
+  font-size: 10px;
+  line-height: 1.5;
+  border-left: 2px solid #333;
+}
+
+.event-log-entry.combat {
+  border-left-color: #ff6b6b;
+}
+
+.event-log-entry.social {
+  border-left-color: #7c8aff;
+}
+
+.event-log-entry.routine {
+  border-left-color: #4ecdc4;
+}
+
+.event-log-entry.explore {
+  border-left-color: #ff9f43;
+}
+
+.event-log-entry .event-time {
+  color: #555;
+  margin-right: 4px;
+}
+
+.event-log-entry .event-text {
+  color: #999;
+}

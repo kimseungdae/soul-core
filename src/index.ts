@@ -107,3 +107,33 @@ export {
   loadPrototypePatterns,
   getPrototypePatterns,
 } from "./patterns/index";
+
+// World Simulator
+export type {
+  TileType,
+  WorldTile,
+  LocationType,
+  WorldLocation,
+  ScheduleEntry,
+  WorldAgent,
+  MonsterType,
+  Monster,
+  WorldConfig,
+  WorldSimState,
+  WorldEvent,
+  TileMapData,
+  Point,
+  AgentDef,
+} from "./world/index";
+export {
+  tickToHour,
+  hourToTimeString,
+  getTimeOfDayLabel,
+  getTimeOfDayLabelKo,
+  createVillageMap,
+  findPath,
+  distance,
+  isAdjacent,
+  createWorldState,
+  worldTick,
+} from "./world/index";

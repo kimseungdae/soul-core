@@ -1278,22 +1278,58 @@ function stopScenario() {
   scenarioStopBtn.style.display = "none";
 }
 
+// --- World Mode ---
+
+import { initWorldMode, destroyWorldMode } from "./world/world-mode";
+
+const tabWorld = $("#tab-world");
+const mainLayout = document.querySelector<HTMLDivElement>(".layout")!;
+const worldView = $("#world-view");
+let worldInitialized = false;
+
+function showMainLayout() {
+  mainLayout.style.display = "grid";
+  worldView.style.display = "none";
+  destroyWorldMode();
+}
+
+function showWorldLayout() {
+  mainLayout.style.display = "none";
+  worldView.style.display = "grid";
+  stopScenario();
+  if (!worldInitialized) {
+    initWorldMode();
+    worldInitialized = true;
+  }
+}
+
 // --- Tab Switching ---
 
 tabManual.addEventListener("click", () => {
   tabManual.classList.add("active");
   tabScenario.classList.remove("active");
+  tabWorld.classList.remove("active");
   manualControls.style.display = "block";
   scenarioControls.style.display = "none";
+  showMainLayout();
   stopScenario();
 });
 
 tabScenario.addEventListener("click", () => {
   tabScenario.classList.add("active");
   tabManual.classList.remove("active");
+  tabWorld.classList.remove("active");
   manualControls.style.display = "none";
   scenarioControls.style.display = "block";
+  showMainLayout();
   updateScenarioDesc();
+});
+
+tabWorld.addEventListener("click", () => {
+  tabWorld.classList.add("active");
+  tabManual.classList.remove("active");
+  tabScenario.classList.remove("active");
+  showWorldLayout();
 });
 
 // --- Event Handlers ---
