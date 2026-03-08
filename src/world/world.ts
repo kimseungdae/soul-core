@@ -30,9 +30,9 @@ const DEFAULT_CONFIG: WorldConfig = {
 };
 
 const MOVE_COOLDOWN = 3;
-const STARVATION_HP_DECAY = 1.5; // hp loss per tick when starving
-const HUNGER_DECAY = 0.008; // per tick (~100 ticks = 0→empty)
-const HUNGER_THRESHOLD = 0.4; // urgent eat
+const STARVATION_HP_DECAY = 0.8; // hp loss per tick when starving
+const HUNGER_DECAY = 0.005; // per tick (~160 ticks ≈ half day to empty)
+const HUNGER_THRESHOLD = 0.5; // urgent eat (earlier reaction)
 const RESPAWN_DELAY = 60; // ticks before new NPC spawns at church
 const GATHER_TICKS: Record<ResourceType, number> = {
   wood: 8,
@@ -126,9 +126,9 @@ function createAgent(def: AgentDef, locations: WorldLocation[]): WorldAgent {
     sleeping: false,
     alive: true,
     deathTick: -1,
-    inventory: emptyInventory(),
+    inventory: { ...emptyInventory(), food: 2 },
     gold: def.initialGold ?? 10,
-    hunger: 0.8,
+    hunger: 1.0,
     hp: 100,
     skills: {
       combat: 0.3,
@@ -918,8 +918,15 @@ function updateGoalAutonomous(
   agent: WorldAgent,
   hour: number,
 ) {
-  // Night: go home and sleep
-  if (hour >= 22 || hour < 5) {
+  // Wake up if starving (even at night)
+  if (agent.sleeping && agent.hunger < 0.2) {
+    agent.sleeping = false;
+    agent.currentGoal = "idle";
+    // Fall through to hunger check below
+  }
+
+  // Night: go home and sleep (unless starving)
+  if ((hour >= 22 || hour < 5) && agent.hunger >= 0.2) {
     if (
       agent.currentGoal !== "sleeping" &&
       agent.currentGoal !== "going_home"
@@ -935,6 +942,8 @@ function updateGoalAutonomous(
   // Wake up if sleeping during day
   if (agent.sleeping || agent.currentGoal === "going_home") {
     if (hour >= 5 && hour < 22) {
+      agent.sleeping = false;
+    } else if (agent.hunger < 0.2) {
       agent.sleeping = false;
     } else {
       return;
@@ -967,48 +976,85 @@ function updateGoalAutonomous(
     }
   }
 
-  // Priority 1: Hunger — eat or hunt (overrides schedule)
+  // Priority 1: Hunger — eat or hunt (overrides everything)
   if (isStarving) {
-    if (agent.inventory.food > 0 || agent.inventory.meal > 0) {
-      // Go home or tavern to eat
-      agent.currentGoal = "eating";
-      agent.currentGoalKo = "식사하러 이동 중";
+    // Has food → eat immediately (anywhere if raw food)
+    if (agent.inventory.food > 0) {
+      agent.inventory.food -= 1;
+      agent.hunger = Math.min(1, agent.hunger + 0.25);
+      agent.currentGoal = "idle";
+      agent.currentGoalKo = "자유 시간";
       agent.emoji = "🍖";
-      navigateTo(world, agent, "tavern");
       return;
     }
-    // No food — go hunting
-    const huntNode = findNearestResource(world, agent, "food");
-    if (huntNode) {
-      agent.currentGoal = "gathering";
-      agent.currentGoalKo = "사냥 중";
-      agent.emoji = "🏹";
-      agent.actionTarget = huntNode.id;
-      navigateToPoint(world, agent, { x: huntNode.x, y: huntNode.y });
+    if (agent.inventory.meal > 0) {
+      const loc = getAgentLocation(world, agent);
+      const atSafe = loc?.type === "tavern" || loc?.id === agent.homeLocationId;
+      if (atSafe) {
+        agent.inventory.meal -= 1;
+        agent.hunger = Math.min(1, agent.hunger + 0.5);
+        agent.currentGoal = "idle";
+        agent.currentGoalKo = "자유 시간";
+        agent.emoji = "🍖";
+        return;
+      }
+      // Go home to eat meal
+      agent.currentGoal = "eating";
+      agent.currentGoalKo = "식사하러 귀가 중";
+      agent.emoji = "🍖";
+      navigateTo(world, agent, agent.homeLocationId);
       return;
     }
     // Buy food if has gold
-    if (agent.gold >= RESOURCE_PRICES.food) {
+    if (agent.gold >= Math.ceil(world.marketPrices.food)) {
       agent.currentGoal = "buying_food";
       agent.currentGoalKo = "음식 구매하러 이동 중";
       agent.emoji = "💰";
       navigateTo(world, agent, "market");
       return;
     }
+    // No food, no gold — MUST hunt. Find any food node.
+    const huntNode = findNearestResource(world, agent, "food");
+    if (huntNode) {
+      agent.currentGoal = "gathering";
+      agent.currentGoalKo = "사냥 중 (배고픔!)";
+      agent.emoji = "🏹";
+      agent.actionTarget = huntNode.id;
+      navigateToPoint(world, agent, { x: huntNode.x, y: huntNode.y });
+      return;
+    }
+    // All food nodes empty — wander toward closest food node anyway
+    const anyFoodNode = world.resourceNodes
+      .filter((n) => n.type === "food")
+      .sort(
+        (a, b) =>
+          distance({ x: agent.x, y: agent.y }, { x: a.x, y: a.y }) -
+          distance({ x: agent.x, y: agent.y }, { x: b.x, y: b.y }),
+      )[0];
+    if (anyFoodNode) {
+      agent.currentGoal = "gathering";
+      agent.currentGoalKo = "사냥감을 찾는 중...";
+      agent.emoji = "🏹";
+      agent.actionTarget = anyFoodNode.id;
+      navigateToPoint(world, agent, { x: anyFoodNode.x, y: anyFoodNode.y });
+      return;
+    }
   }
 
-  // Priority 2: Job-based activity (schedule)
-  const scheduled = agent.schedule.find(
-    (s) => hour >= s.startHour && hour < s.endHour,
-  );
+  // Priority 2: Job-based activity (schedule) — SKIPPED when hungry
+  if (!isStarving) {
+    const scheduled = agent.schedule.find(
+      (s) => hour >= s.startHour && hour < s.endHour,
+    );
 
-  if (scheduled) {
-    if (agent.currentGoal !== scheduled.activity) {
-      agent.currentGoal = scheduled.activity;
-      agent.currentGoalKo = scheduled.activityKo;
-      navigateTo(world, agent, scheduled.locationId);
+    if (scheduled) {
+      if (agent.currentGoal !== scheduled.activity) {
+        agent.currentGoal = scheduled.activity;
+        agent.currentGoalKo = scheduled.activityKo;
+        navigateTo(world, agent, scheduled.locationId);
+      }
+      return;
     }
-    return;
   }
 
   // Get personality traits
@@ -1167,7 +1213,6 @@ function updateGoalAutonomous(
     agent.currentGoal !== "exploring" &&
     agent.currentGoal !== "socializing" &&
     agent.currentGoal !== "seeking_comfort" &&
-    !scheduled &&
     agent.path.length === 0
   ) {
     agent.currentGoal = "idle";
@@ -1441,16 +1486,34 @@ function completeAction(
       }
 
       if (node.type === "food") {
-        agent.emoji = agent.currentGoal === "crafting" ? "🔨" : "🏹";
-        results.push(
-          makeEvent(
-            world,
-            agent,
-            hour,
-            "gather",
-            `${agent.nameKo}이(가) 사냥에 성공! (고기 +${amount})`,
-          ),
-        );
+        // Eat immediately if hungry
+        if (agent.hunger < HUNGER_THRESHOLD && agent.inventory.food > 0) {
+          agent.inventory.food -= 1;
+          agent.hunger = Math.min(1, agent.hunger + 0.25);
+          agent.currentGoal = "idle";
+          agent.currentGoalKo = "자유 시간";
+          agent.emoji = "🍖";
+          results.push(
+            makeEvent(
+              world,
+              agent,
+              hour,
+              "gather",
+              `${agent.nameKo}이(가) 사냥 후 바로 고기를 구워 먹었다! (고기 +${amount - 1}, 포만감 ${Math.floor(agent.hunger * 100)}%)`,
+            ),
+          );
+        } else {
+          agent.emoji = agent.currentGoal === "crafting" ? "🔨" : "🏹";
+          results.push(
+            makeEvent(
+              world,
+              agent,
+              hour,
+              "gather",
+              `${agent.nameKo}이(가) 사냥에 성공! (고기 +${amount})`,
+            ),
+          );
+        }
         return results;
       }
 
@@ -1609,9 +1672,24 @@ function doEat(
     return null;
   }
 
-  // No food at all - reset goal
+  // No food at all - go hunt immediately
+  const huntNode = findNearestResource(world, agent, "food");
+  if (huntNode) {
+    agent.currentGoal = "gathering";
+    agent.currentGoalKo = "음식이 없어 사냥 출발!";
+    agent.emoji = "🏹";
+    agent.actionTarget = huntNode.id;
+    navigateToPoint(world, agent, { x: huntNode.x, y: huntNode.y });
+    return makeEvent(
+      world,
+      agent,
+      hour,
+      "gather",
+      `${agent.nameKo}: 음식이 없다! 사냥하러 출발!`,
+    );
+  }
   agent.currentGoal = "idle";
-  agent.currentGoalKo = "자유 시간";
+  agent.currentGoalKo = "음식을 찾는 중...";
   return null;
 }
 
