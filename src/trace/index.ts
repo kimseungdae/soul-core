@@ -38,3 +38,7 @@ export type {
   ConflictRecord,
   DecisionTrace,
 } from "./types";
+
+export { TraceLogger } from "./logger";
+export { takeSnapshot, diffSnapshots } from "./snapshot";
+export type { StateSnapshot, StateDiff } from "./snapshot";

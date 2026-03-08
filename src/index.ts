@@ -53,6 +53,13 @@ export type {
   DecisionTrace,
 } from "./trace/index";
 export { createTraceLog, addTraceEntry } from "./trace/index";
+export { TraceLogger } from "./trace/index";
+export { takeSnapshot, diffSnapshots } from "./trace/index";
+export type { StateSnapshot, StateDiff } from "./trace/index";
+
+// Core Pipeline
+export { processBehavior } from "./core/pipeline";
+export type { PipelineOptions } from "./core/pipeline";
 
 // Types
 export type { EntityId, Tick, Range } from "./types/common";
