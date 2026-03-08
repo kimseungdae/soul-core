@@ -510,9 +510,16 @@ export function worldTick(world: WorldState): WorldEvent[] {
     }
   }
 
-  // Process each agent
+  // Process each agent (with social dedup tracking)
+  const socialThisTick = new Set<string>();
   for (const agent of world.agents) {
-    const agentEvents = processAgent(world, agent, hour, timeOfDay);
+    const agentEvents = processAgent(
+      world,
+      agent,
+      hour,
+      timeOfDay,
+      socialThisTick,
+    );
     events.push(...agentEvents);
   }
 
@@ -532,6 +539,7 @@ function processAgent(
   agent: WorldAgent,
   hour: number,
   timeOfDay: string,
+  socialThisTick: Set<string> = new Set(),
 ): WorldEvent[] {
   const events: WorldEvent[] = [];
 
@@ -709,7 +717,7 @@ function processAgent(
         isAdjacent({ x: agent.x, y: agent.y }, { x: a.x, y: a.y }),
     );
 
-    if (nearbyAgent) {
+    if (nearbyAgent && !socialThisTick.has(agent.id)) {
       const ext = agent.state.traits.bigFive.extraversion;
       // Skip most social if hungry or on a mission
       const isBusy =
@@ -725,6 +733,8 @@ function processAgent(
       ) {
         const coopEvent = tryCooperate(world, agent, nearbyAgent, hour);
         if (coopEvent) {
+          socialThisTick.add(agent.id);
+          socialThisTick.add(nearbyAgent.id);
           events.push(coopEvent);
           return events;
         }
@@ -735,6 +745,8 @@ function processAgent(
         if (Math.random() < 0.02 + ext * 0.02) {
           const tradeEvent = tryTrade(world, agent, nearbyAgent, hour);
           if (tradeEvent) {
+            socialThisTick.add(agent.id);
+            socialThisTick.add(nearbyAgent.id);
             events.push(tradeEvent);
             return events;
           }
@@ -743,6 +755,8 @@ function processAgent(
         if (Math.random() < 0.03) {
           const huntEvent = tryFormHuntParty(world, agent, nearbyAgent, hour);
           if (huntEvent) {
+            socialThisTick.add(agent.id);
+            socialThisTick.add(nearbyAgent.id);
             events.push(huntEvent);
             return events;
           }
@@ -756,6 +770,8 @@ function processAgent(
             hour,
           );
           if (exchangeEvent) {
+            socialThisTick.add(agent.id);
+            socialThisTick.add(nearbyAgent.id);
             events.push(exchangeEvent);
             return events;
           }
@@ -769,6 +785,8 @@ function processAgent(
             hour,
           );
           if (depthEvent) {
+            socialThisTick.add(agent.id);
+            socialThisTick.add(nearbyAgent.id);
             events.push(depthEvent);
             return events;
           }
@@ -776,6 +794,8 @@ function processAgent(
         // Regular social (much rarer)
         if (Math.random() < 0.02 + ext * 0.03) {
           const socialEvent = handleSocial(world, agent, nearbyAgent);
+          socialThisTick.add(agent.id);
+          socialThisTick.add(nearbyAgent.id);
           events.push(socialEvent);
           return events;
         }
@@ -869,6 +889,27 @@ function processAgent(
     agent.currentGoal = "sleeping";
     agent.currentGoalKo = "수면 중";
     agent.sleeping = true;
+  } else if (
+    (agent.currentGoal === "hunting_monster" ||
+      agent.currentGoal === "quest_hunt") &&
+    !agent.sleeping
+  ) {
+    const target = world.monsters
+      .filter((m) => m.alive)
+      .sort(
+        (a, b) =>
+          distance({ x: agent.x, y: agent.y }, { x: a.x, y: a.y }) -
+          distance({ x: agent.x, y: agent.y }, { x: b.x, y: b.y }),
+      )[0];
+    if (
+      target &&
+      distance({ x: agent.x, y: agent.y }, { x: target.x, y: target.y }) <= 10
+    ) {
+      navigateToPoint(world, agent, { x: target.x, y: target.y });
+    } else {
+      agent.currentGoal = "idle";
+      agent.currentGoalKo = "자유 시간";
+    }
   } else if (agent.currentGoal === "exploring" && !agent.sleeping) {
     // Exploration reward (Step 15)
     const reward = getExplorationReward(agent);
@@ -911,7 +952,415 @@ function processAgent(
   return events;
 }
 
-// --- Autonomous Goal System ---
+// --- Utility AI Action Scoring System ---
+
+interface ActionCandidate {
+  goal: string;
+  goalKo: string;
+  emoji: string;
+  score: number;
+  execute: () => void;
+}
+
+const INERTIA_BONUS = 20;
+
+function scoreAllActions(
+  world: WorldState,
+  agent: WorldAgent,
+  hour: number,
+): ActionCandidate[] {
+  const candidates: ActionCandidate[] = [];
+  const bf = agent.state.traits.bigFive;
+  const roles = agent.seed.roles ?? [];
+  const hungerUrgency = 1 - agent.hunger; // 0=full, 1=starving
+
+  // 1. Eat (has food → eat immediately)
+  if (agent.inventory.food > 0) {
+    candidates.push({
+      goal: "eating",
+      goalKo: "식사 중",
+      emoji: "🍖",
+      score: hungerUrgency * 100,
+      execute: () => {
+        agent.inventory.food -= 1;
+        agent.hunger = Math.min(1, agent.hunger + 0.25);
+        agent.currentGoal = "idle";
+        agent.currentGoalKo = "자유 시간";
+        agent.emoji = "🍖";
+      },
+    });
+  }
+  if (agent.inventory.meal > 0) {
+    const loc = getAgentLocation(world, agent);
+    const atSafe = loc?.type === "tavern" || loc?.id === agent.homeLocationId;
+    if (atSafe) {
+      candidates.push({
+        goal: "eating",
+        goalKo: "식사 중",
+        emoji: "🍖",
+        score: hungerUrgency * 100,
+        execute: () => {
+          agent.inventory.meal -= 1;
+          agent.hunger = Math.min(1, agent.hunger + 0.5);
+          agent.currentGoal = "idle";
+          agent.currentGoalKo = "자유 시간";
+          agent.emoji = "🍖";
+        },
+      });
+    } else {
+      candidates.push({
+        goal: "eating",
+        goalKo: "식사하러 귀가 중",
+        emoji: "🍖",
+        score: hungerUrgency * 90,
+        execute: () => {
+          agent.currentGoal = "eating";
+          agent.currentGoalKo = "식사하러 귀가 중";
+          agent.emoji = "🍖";
+          navigateTo(world, agent, agent.homeLocationId);
+        },
+      });
+    }
+  }
+
+  // 2. Hunt food (no food, find food node)
+  const huntNode = findNearestResource(world, agent, "food");
+  const anyFoodNode = !huntNode
+    ? world.resourceNodes
+        .filter((n) => n.type === "food")
+        .sort(
+          (a, b) =>
+            distance({ x: agent.x, y: agent.y }, { x: a.x, y: a.y }) -
+            distance({ x: agent.x, y: agent.y }, { x: b.x, y: b.y }),
+        )[0]
+    : null;
+  const foodTarget = huntNode ?? anyFoodNode;
+  if (foodTarget) {
+    const noFoodBonus =
+      agent.inventory.food === 0 && agent.inventory.meal === 0 ? 20 : 0;
+    candidates.push({
+      goal: "gathering",
+      goalKo: huntNode ? "사냥 중" : "사냥감을 찾는 중...",
+      emoji: "🏹",
+      score: hungerUrgency * 90 + noFoodBonus,
+      execute: () => {
+        agent.currentGoal = "gathering";
+        agent.currentGoalKo = huntNode ? "사냥 중" : "사냥감을 찾는 중...";
+        agent.emoji = "🏹";
+        agent.actionTarget = foodTarget.id;
+        navigateToPoint(world, agent, { x: foodTarget.x, y: foodTarget.y });
+      },
+    });
+  }
+
+  // 3. Buy food (has gold)
+  if (agent.gold >= Math.ceil(world.marketPrices.food)) {
+    candidates.push({
+      goal: "buying_food",
+      goalKo: "음식 구매하러 이동 중",
+      emoji: "💰",
+      score: hungerUrgency * 70,
+      execute: () => {
+        agent.currentGoal = "buying_food";
+        agent.currentGoalKo = "음식 구매하러 이동 중";
+        agent.emoji = "💰";
+        navigateTo(world, agent, "market");
+      },
+    });
+  }
+
+  // 4. Monster hunting (warrior role + combat skill + HP)
+  const nearestMonster = world.monsters
+    .filter((m) => m.alive)
+    .sort(
+      (a, b) =>
+        distance({ x: agent.x, y: agent.y }, { x: a.x, y: a.y }) -
+        distance({ x: agent.x, y: agent.y }, { x: b.x, y: b.y }),
+    )[0];
+  if (nearestMonster && agent.hp > 40) {
+    const isWarrior =
+      roles.includes("warrior") || roles.includes("guardian") ? 30 : 0;
+    const combatScore = agent.skills.combat * 40;
+    const hpBonus = agent.hp > 60 ? 10 : 0;
+    candidates.push({
+      goal: "hunting_monster",
+      goalKo: `${nearestMonster.nameKo} 사냥하러 출발`,
+      emoji: "⚔️",
+      score: combatScore + isWarrior + hpBonus,
+      execute: () => {
+        agent.currentGoal = "hunting_monster";
+        agent.currentGoalKo = `${nearestMonster.nameKo} 사냥하러 출발`;
+        agent.emoji = "⚔️";
+        navigateToPoint(world, agent, {
+          x: nearestMonster.x,
+          y: nearestMonster.y,
+        });
+      },
+    });
+  }
+
+  // 5. Quest hunt (assigned by chief)
+  if (world.monsterQuest) {
+    const quest = world.monsterQuest;
+    const isAssigned = quest.assignedAgents.includes(agent.id);
+    if (isAssigned) {
+      const monster = world.monsters.find(
+        (m) => m.id === quest.targetMonsterId && m.alive,
+      );
+      if (monster && agent.hp > 30) {
+        candidates.push({
+          goal: "quest_hunt",
+          goalKo: `📜 ${quest.targetNameKo} 토벌 중`,
+          emoji: "⚔️",
+          score: 60 + agent.skills.combat * 20,
+          execute: () => {
+            agent.currentGoal = "quest_hunt";
+            agent.currentGoalKo = `📜 ${quest.targetNameKo} 토벌 중`;
+            agent.emoji = "⚔️";
+            navigateToPoint(world, agent, { x: monster.x, y: monster.y });
+          },
+        });
+      }
+    }
+  }
+
+  // 6. Resource gathering (job-based)
+  const targetType = pickGatherTarget(agent);
+  if (targetType) {
+    const node = findNearestResource(world, agent, targetType);
+    if (node) {
+      const roleBonus =
+        (roles.includes("blacksmith") && targetType === "ore") ||
+        (roles.includes("healer") && targetType === "herb")
+          ? 20
+          : 0;
+      candidates.push({
+        goal: "gathering",
+        goalKo: `${node.nameKo} 채집하러 이동 중`,
+        emoji: node.emoji,
+        score: bf.conscientiousness * 30 + roleBonus + 15,
+        execute: () => {
+          agent.currentGoal = "gathering";
+          agent.currentGoalKo = `${node.nameKo} 채집하러 이동 중`;
+          agent.emoji = node.emoji;
+          agent.actionTarget = node.id;
+          navigateToPoint(world, agent, { x: node.x, y: node.y });
+        },
+      });
+    }
+  }
+
+  // 7. Crafting (has materials)
+  const recipe = findCraftableRecipe(agent);
+  if (recipe && agent.skills.crafting > 0.2) {
+    candidates.push({
+      goal: "crafting",
+      goalKo: `${recipe.nameKo} 제작하러 이동 중`,
+      emoji: "🔨",
+      score: bf.conscientiousness * 25 + agent.skills.crafting * 15 + 10,
+      execute: () => {
+        agent.currentGoal = "crafting";
+        agent.currentGoalKo = `${recipe.nameKo} 제작하러 이동 중`;
+        agent.emoji = "🔨";
+        agent.actionTarget = recipe.id;
+        navigateTo(world, agent, agent.workLocationId);
+      },
+    });
+  }
+
+  // 8. Selling (surplus items, merchant bonus)
+  const hasGoods = Object.values(agent.inventory).some((v) => v >= 3);
+  if (hasGoods) {
+    const merchantBonus =
+      roles.includes("merchant") || roles.includes("trader") ? 15 : 0;
+    const target = world.agents
+      .filter((a) => a.id !== agent.id && a.alive && !a.sleeping)
+      .sort(() => Math.random() - 0.5)[0];
+    if (target) {
+      candidates.push({
+        goal: "visiting_customer",
+        goalKo: `${target.nameKo}에게 판매하러 이동`,
+        emoji: "💰",
+        score: 20 + merchantBonus,
+        execute: () => {
+          agent.currentGoal = "visiting_customer";
+          agent.currentGoalKo = `${target.nameKo}에게 판매하러 이동`;
+          agent.emoji = "💰";
+          navigateToPoint(world, agent, { x: target.x, y: target.y });
+        },
+      });
+    }
+  }
+
+  // 9. Healing (healer role, injured NPC nearby)
+  if (roles.includes("healer") || roles.includes("priestess")) {
+    if (agent.inventory.potion > 0) {
+      const injured = world.agents.find(
+        (a) => a.id !== agent.id && a.alive && a.hp < 50 && !a.sleeping,
+      );
+      if (injured) {
+        candidates.push({
+          goal: "healing",
+          goalKo: `${injured.nameKo} 치료하러 이동`,
+          emoji: "💊",
+          score: 45,
+          execute: () => {
+            agent.currentGoal = "healing";
+            agent.currentGoalKo = `${injured.nameKo} 치료하러 이동`;
+            agent.emoji = "💊";
+            navigateToPoint(world, agent, { x: injured.x, y: injured.y });
+          },
+        });
+      }
+    }
+  }
+
+  // 10. Schedule activity (low priority, drops to 0 when hungry)
+  const scheduled = agent.schedule.find(
+    (s) => hour >= s.startHour && hour < s.endHour,
+  );
+  if (scheduled) {
+    const scheduleScore = hungerUrgency > 0.5 ? 0 : 25;
+    candidates.push({
+      goal: scheduled.activity,
+      goalKo: scheduled.activityKo,
+      emoji: agent.emoji,
+      score: scheduleScore,
+      execute: () => {
+        agent.currentGoal = scheduled.activity;
+        agent.currentGoalKo = scheduled.activityKo;
+        navigateTo(world, agent, scheduled.locationId);
+      },
+    });
+  }
+
+  // 11. Studying/Advising (scholar/sage roles)
+  if (roles.includes("scholar")) {
+    candidates.push({
+      goal: "studying",
+      goalKo: "연구 중",
+      emoji: "📖",
+      score: bf.openness * 20 + 10,
+      execute: () => {
+        agent.currentGoal = "studying";
+        agent.currentGoalKo = "연구 중";
+        agent.emoji = "📖";
+        navigateTo(world, agent, "library");
+      },
+    });
+  }
+  if (roles.includes("sage") || roles.includes("advisor")) {
+    candidates.push({
+      goal: "advising",
+      goalKo: "조언하러 이동",
+      emoji: "🔮",
+      score: bf.agreeableness * 15 + 10,
+      execute: () => {
+        agent.currentGoal = "advising";
+        agent.currentGoalKo = "조언하러 이동";
+        agent.emoji = "🔮";
+        navigateTo(world, agent, "plaza");
+      },
+    });
+  }
+
+  // 12. Explore
+  const exploreTargets = ["forest", "dungeon", "wilderness"] as const;
+  const exploreLoc = world.locations.find((l) =>
+    exploreTargets.includes(l.type as (typeof exploreTargets)[number]),
+  );
+  if (exploreLoc) {
+    candidates.push({
+      goal: "exploring",
+      goalKo: `${exploreLoc.nameKo} 탐험 중`,
+      emoji: "🧭",
+      score: bf.openness * 15,
+      execute: () => {
+        agent.currentGoal = "exploring";
+        agent.currentGoalKo = `${exploreLoc.nameKo} 탐험 중`;
+        agent.emoji = "🧭";
+        navigateTo(world, agent, exploreLoc.id);
+      },
+    });
+  }
+
+  // 13. Socialize
+  candidates.push({
+    goal: "socializing",
+    goalKo: "어울리러 이동 중",
+    emoji: "💬",
+    score: bf.extraversion * 10,
+    execute: () => {
+      const socialSpots = ["tavern", "plaza", "market"];
+      const spot = socialSpots[Math.floor(Math.random() * socialSpots.length)];
+      agent.currentGoal = "socializing";
+      agent.currentGoalKo = "어울리러 이동 중";
+      agent.emoji = "💬";
+      navigateTo(world, agent, spot);
+    },
+  });
+
+  // 14. Rest / go home (fatigue-based)
+  candidates.push({
+    goal: "going_home",
+    goalKo: "귀가 중",
+    emoji: "🏠",
+    score: agent.fatigue * 40,
+    execute: () => {
+      agent.currentGoal = "going_home";
+      agent.currentGoalKo = "귀가 중";
+      agent.emoji = "🏠";
+      navigateTo(world, agent, agent.homeLocationId);
+    },
+  });
+
+  // 15. Emotion overrides (high intensity only, adds as candidates)
+  const topEmotion = agent.state.emotions.active.sort(
+    (a, b) => b.intensity - a.intensity,
+  )[0];
+  if (topEmotion && topEmotion.intensity > 0.5) {
+    if (
+      (topEmotion.type === "fear" || topEmotion.type === "anxiety") &&
+      !isInVillage(world, agent)
+    ) {
+      candidates.push({
+        goal: "going_home",
+        goalKo: "두려워서 귀가 중",
+        emoji: "😰",
+        score: 80,
+        execute: () => {
+          agent.currentGoal = "going_home";
+          agent.currentGoalKo = "두려워서 귀가 중";
+          agent.emoji = "😰";
+          navigateTo(world, agent, agent.homeLocationId);
+        },
+      });
+    }
+    if (topEmotion.type === "distress" || topEmotion.type === "loneliness") {
+      candidates.push({
+        goal: "seeking_comfort",
+        goalKo:
+          topEmotion.type === "loneliness"
+            ? "외로움을 달래러"
+            : "위안을 구하러",
+        emoji: "😢",
+        score: 35,
+        execute: () => {
+          const dest = Math.random() < 0.5 ? "church" : "library";
+          agent.currentGoal = "seeking_comfort";
+          agent.currentGoalKo =
+            topEmotion.type === "loneliness"
+              ? "외로움을 달래러"
+              : "위안을 구하러";
+          agent.emoji = "😢";
+          navigateTo(world, agent, dest);
+        },
+      });
+    }
+  }
+
+  return candidates;
+}
 
 function updateGoalAutonomous(
   world: WorldState,
@@ -922,7 +1371,6 @@ function updateGoalAutonomous(
   if (agent.sleeping && agent.hunger < 0.2) {
     agent.sleeping = false;
     agent.currentGoal = "idle";
-    // Fall through to hunger check below
   }
 
   // Night: go home and sleep (unless starving)
@@ -953,22 +1401,19 @@ function updateGoalAutonomous(
   // Skip if busy with action
   if (agent.actionTicks > 0) return;
 
-  // Hunger is URGENT — override everything except active actions
-  const isStarving = agent.hunger < HUNGER_THRESHOLD;
-  const isCurrentlyFeeding =
-    agent.currentGoal === "eating" ||
-    agent.currentGoal === "gathering" ||
-    agent.currentGoal === "buying_food" ||
-    agent.currentGoal === "quest_hunt";
-
-  // Skip if already pathfinding (unless idle OR starving and not feeding)
+  // Skip if actively pathfinding — but interrupt for urgent needs
   if (
     agent.path.length > 0 &&
     agent.pathIndex < agent.path.length &&
     agent.currentGoal !== "idle"
   ) {
-    // Break out of non-survival tasks when starving
-    if (isStarving && !isCurrentlyFeeding) {
+    const hungerUrgency = 1 - agent.hunger;
+    const isFeeding =
+      agent.currentGoal === "eating" ||
+      agent.currentGoal === "gathering" ||
+      agent.currentGoal === "buying_food" ||
+      agent.currentGoal === "quest_hunt";
+    if (hungerUrgency > 0.5 && !isFeeding) {
       agent.path = [];
       agent.pathIndex = 0;
     } else {
@@ -976,247 +1421,33 @@ function updateGoalAutonomous(
     }
   }
 
-  // Priority 1: Hunger — eat or hunt (overrides everything)
-  if (isStarving) {
-    // Has food → eat immediately (anywhere if raw food)
-    if (agent.inventory.food > 0) {
-      agent.inventory.food -= 1;
-      agent.hunger = Math.min(1, agent.hunger + 0.25);
-      agent.currentGoal = "idle";
-      agent.currentGoalKo = "자유 시간";
-      agent.emoji = "🍖";
-      return;
-    }
-    if (agent.inventory.meal > 0) {
-      const loc = getAgentLocation(world, agent);
-      const atSafe = loc?.type === "tavern" || loc?.id === agent.homeLocationId;
-      if (atSafe) {
-        agent.inventory.meal -= 1;
-        agent.hunger = Math.min(1, agent.hunger + 0.5);
-        agent.currentGoal = "idle";
-        agent.currentGoalKo = "자유 시간";
-        agent.emoji = "🍖";
-        return;
-      }
-      // Go home to eat meal
-      agent.currentGoal = "eating";
-      agent.currentGoalKo = "식사하러 귀가 중";
-      agent.emoji = "🍖";
-      navigateTo(world, agent, agent.homeLocationId);
-      return;
-    }
-    // Buy food if has gold
-    if (agent.gold >= Math.ceil(world.marketPrices.food)) {
-      agent.currentGoal = "buying_food";
-      agent.currentGoalKo = "음식 구매하러 이동 중";
-      agent.emoji = "💰";
-      navigateTo(world, agent, "market");
-      return;
-    }
-    // No food, no gold — MUST hunt. Find any food node.
-    const huntNode = findNearestResource(world, agent, "food");
-    if (huntNode) {
-      agent.currentGoal = "gathering";
-      agent.currentGoalKo = "사냥 중 (배고픔!)";
-      agent.emoji = "🏹";
-      agent.actionTarget = huntNode.id;
-      navigateToPoint(world, agent, { x: huntNode.x, y: huntNode.y });
-      return;
-    }
-    // All food nodes empty — wander toward closest food node anyway
-    const anyFoodNode = world.resourceNodes
-      .filter((n) => n.type === "food")
-      .sort(
-        (a, b) =>
-          distance({ x: agent.x, y: agent.y }, { x: a.x, y: a.y }) -
-          distance({ x: agent.x, y: agent.y }, { x: b.x, y: b.y }),
-      )[0];
-    if (anyFoodNode) {
-      agent.currentGoal = "gathering";
-      agent.currentGoalKo = "사냥감을 찾는 중...";
-      agent.emoji = "🏹";
-      agent.actionTarget = anyFoodNode.id;
-      navigateToPoint(world, agent, { x: anyFoodNode.x, y: anyFoodNode.y });
-      return;
+  // Score all possible actions
+  const candidates = scoreAllActions(world, agent, hour);
+  if (candidates.length === 0) return;
+
+  // Apply inertia bonus to current action
+  for (const c of candidates) {
+    if (c.goal === agent.currentGoal) {
+      c.score += INERTIA_BONUS;
     }
   }
 
-  // Priority 2: Job-based activity (schedule) — SKIPPED when hungry
-  if (!isStarving) {
-    const scheduled = agent.schedule.find(
-      (s) => hour >= s.startHour && hour < s.endHour,
-    );
+  // Sort by score descending
+  candidates.sort((a, b) => b.score - a.score);
 
-    if (scheduled) {
-      if (agent.currentGoal !== scheduled.activity) {
-        agent.currentGoal = scheduled.activity;
-        agent.currentGoalKo = scheduled.activityKo;
-        navigateTo(world, agent, scheduled.locationId);
-      }
-      return;
+  const best = candidates[0];
+  if (!best || best.score <= 0) return;
+
+  // Only switch if best action beats current action's score
+  const currentScore =
+    candidates.find((c) => c.goal === agent.currentGoal)?.score ?? 0;
+
+  if (best.goal !== agent.currentGoal) {
+    if (best.score > currentScore) {
+      best.execute();
     }
-  }
-
-  // Get personality traits
-  const bf = agent.state.traits.bigFive;
-  const mood = agent.state.emotions.mood;
-  const roles = agent.seed.roles ?? [];
-
-  // Get dominant emotion
-  const topEmotion = agent.state.emotions.active.sort(
-    (a, b) => b.intensity - a.intensity,
-  )[0];
-  const emotionType = topEmotion?.type;
-  const emotionIntensity = topEmotion?.intensity ?? 0;
-
-  // Emotion overrides (Step 7)
-  if (emotionIntensity > 0.5) {
-    if (
-      (emotionType === "fear" || emotionType === "anxiety") &&
-      !isInVillage(world, agent)
-    ) {
-      agent.currentGoal = "going_home";
-      agent.currentGoalKo = "두려워서 귀가 중";
-      agent.emoji = "😰";
-      navigateTo(world, agent, agent.homeLocationId);
-      return;
-    }
-    if (emotionType === "distress" || emotionType === "loneliness") {
-      if (Math.random() < 0.3) {
-        const dest = Math.random() < 0.5 ? "church" : "library";
-        agent.currentGoal = "seeking_comfort";
-        agent.currentGoalKo =
-          emotionType === "loneliness" ? "외로움을 달래러" : "위안을 구하러";
-        agent.emoji = "😢";
-        navigateTo(world, agent, dest);
-        return;
-      }
-    }
-    if (emotionType === "joy" && Math.random() < 0.2) {
-      agent.currentGoal = "socializing";
-      agent.currentGoalKo = "기분 좋게 어울리는 중";
-      agent.emoji = "😊";
-      navigateTo(world, agent, "plaza");
-      return;
-    }
-  }
-
-  // Priority 3: Job-specific behavior (Step 6)
-  if (agent.currentGoal === "idle") {
-    const jobAction = getJobSpecificAction(world, agent, roles);
-    if (jobAction) {
-      agent.currentGoal = jobAction.goal;
-      agent.currentGoalKo = jobAction.goalKo;
-      agent.emoji = jobAction.emoji;
-      if (jobAction.actionTarget) agent.actionTarget = jobAction.actionTarget;
-      if (jobAction.navigateTo) navigateTo(world, agent, jobAction.navigateTo);
-      else if (jobAction.navigateToPoint)
-        navigateToPoint(world, agent, jobAction.navigateToPoint);
-      return;
-    }
-  }
-
-  // Priority 4: Craft if has materials (personality-weighted)
-  if (agent.currentGoal === "idle" || agent.currentGoal === "자유 시간") {
-    const recipe = findCraftableRecipe(agent);
-    const craftChance = 0.3 + bf.conscientiousness * 0.4;
-    if (recipe && agent.skills.crafting > 0.2 && Math.random() < craftChance) {
-      agent.currentGoal = "crafting";
-      agent.currentGoalKo = `${recipe.nameKo} 제작하러 이동 중`;
-      agent.emoji = "🔨";
-      agent.actionTarget = recipe.id;
-      navigateTo(world, agent, agent.workLocationId);
-      return;
-    }
-  }
-
-  // Priority 4.5: Accept monster quest from chief
-  if (agent.currentGoal === "idle" && world.monsterQuest) {
-    const quest = world.monsterQuest;
-    const isAssigned = quest.assignedAgents.includes(agent.id);
-    const hasComba = agent.skills.combat > 0.3 || agent.hp > 60;
-    if (isAssigned && hasComba) {
-      const monster = world.monsters.find(
-        (m) => m.id === quest.targetMonsterId && m.alive,
-      );
-      if (monster) {
-        agent.currentGoal = "quest_hunt";
-        agent.currentGoalKo = `📜 ${quest.targetNameKo} 토벌 중`;
-        agent.emoji = "⚔️";
-        navigateToPoint(world, agent, { x: monster.x, y: monster.y });
-        return;
-      }
-    }
-  }
-
-  // Priority 5: Gather resources (higher chance)
-  if (agent.currentGoal === "idle") {
-    const gatherChance = 0.5 + bf.conscientiousness * 0.3;
-    if (Math.random() < gatherChance) {
-      const targetType = pickGatherTarget(agent);
-      if (targetType) {
-        const node = findNearestResource(world, agent, targetType);
-        if (node) {
-          agent.currentGoal = "gathering";
-          agent.currentGoalKo = `${node.nameKo} 채집하러 이동 중`;
-          agent.emoji = node.emoji;
-          agent.actionTarget = node.id;
-          navigateToPoint(world, agent, { x: node.x, y: node.y });
-          return;
-        }
-      }
-    }
-  }
-
-  // Priority 6: Explore (high Openness) (Step 5)
-  if (agent.currentGoal === "idle" && Math.random() < bf.openness * 0.15) {
-    const exploreTargets = ["forest", "dungeon", "wilderness"] as const;
-    const target =
-      exploreTargets[Math.floor(Math.random() * exploreTargets.length)];
-    const loc = world.locations.find((l) => l.type === target);
-    if (loc) {
-      agent.currentGoal = "exploring";
-      agent.currentGoalKo = `${loc.nameKo} 탐험 중`;
-      agent.emoji = "🧭";
-      navigateTo(world, agent, loc.id);
-      return;
-    }
-  }
-
-  // Priority 7: Socialize (much rarer)
-  if (agent.currentGoal === "idle" && Math.random() < bf.extraversion * 0.04) {
-    const socialSpots = ["tavern", "plaza", "market"];
-    const spot = socialSpots[Math.floor(Math.random() * socialSpots.length)];
-    agent.currentGoal = "socializing";
-    agent.currentGoalKo = "어울리러 이동 중";
-    agent.emoji = "💬";
-    navigateTo(world, agent, spot);
-    return;
-  }
-
-  // Priority 8: Think (rare)
-  if (
-    agent.currentGoal === "idle" &&
-    Math.random() < 0.02 + bf.neuroticism * 0.02
-  ) {
-    agent.currentGoal = "thinking";
-    agent.currentGoalKo = "고민 중";
-    agent.emoji = "💭";
-    navigateTo(world, agent, "plaza");
-    return;
-  }
-
-  // Default: idle / free time
-  if (
-    agent.currentGoal !== "idle" &&
-    agent.currentGoal !== "thinking" &&
-    agent.currentGoal !== "exploring" &&
-    agent.currentGoal !== "socializing" &&
-    agent.currentGoal !== "seeking_comfort" &&
-    agent.path.length === 0
-  ) {
-    agent.currentGoal = "idle";
-    agent.currentGoalKo = "자유 시간";
+  } else if (agent.currentGoal === "idle" || agent.path.length === 0) {
+    best.execute();
   }
 }
 
@@ -2105,7 +2336,7 @@ function tickChiefQuest(world: WorldState, events: WorldEvent[], hour: number) {
     !world.monsterQuest &&
     hour >= 6 &&
     hour < 20 &&
-    world.currentTick % 80 === 0 &&
+    world.currentTick % 30 === 0 &&
     world.currentTick > 0
   ) {
     const aliveMonsters = world.monsters.filter((m) => m.alive);

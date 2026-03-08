@@ -26,6 +26,7 @@
     "dist"
   ],
   "scripts": {
+    "dev": "npm run build && cd playground && npx vite --host",
     "build": "tsup",
     "test": "vitest run",
     "test:watch": "vitest",
