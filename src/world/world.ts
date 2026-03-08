@@ -31,7 +31,7 @@ const DEFAULT_CONFIG: WorldConfig = {
 
 const MOVE_COOLDOWN = 3;
 const STARVATION_HP_DECAY = 0.8; // hp loss per tick when starving
-const HUNGER_DECAY = 0.005; // per tick (~160 ticks ≈ half day to empty)
+const HUNGER_DECAY = 0.003; // per tick (~333 ticks ≈ full day to empty)
 const HUNGER_THRESHOLD = 0.5; // urgent eat (earlier reaction)
 const RESPAWN_DELAY = 60; // ticks before new NPC spawns at church
 const GATHER_TICKS: Record<ResourceType, number> = {
@@ -126,7 +126,17 @@ function createAgent(def: AgentDef, locations: WorldLocation[]): WorldAgent {
     sleeping: false,
     alive: true,
     deathTick: -1,
-    inventory: { ...emptyInventory(), food: 2 },
+    inventory: {
+      ...emptyInventory(),
+      food: 3,
+      wood: 1,
+      ...(def.seed.roles?.includes("blacksmith") ? { ore: 3, wood: 2 } : {}),
+      ...(def.seed.roles?.includes("healer") ? { herb: 2 } : {}),
+      ...(def.seed.roles?.includes("warrior") ||
+      def.seed.roles?.includes("guardian")
+        ? { weapon: 1 }
+        : {}),
+    },
     gold: def.initialGold ?? 10,
     hunger: 1.0,
     hp: 100,
