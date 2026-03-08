@@ -5,8 +5,16 @@ import type {
   WorldConfig,
   WorldEvent,
   WorldLocation,
+  ResourceNode,
+  ItemType,
+  ResourceType,
 } from "./types";
-import { tickToHour, getTimeOfDayLabel } from "./types";
+import {
+  tickToHour,
+  getTimeOfDayLabel,
+  RECIPES,
+  RESOURCE_PRICES,
+} from "./types";
 import type { PersonaSeed } from "../seed/persona-seed";
 import type { BehaviorRequest, EventCategory } from "../types/request";
 import { hydratePersona } from "../seed/hydrate";
@@ -17,9 +25,33 @@ import { findPath, distance, isAdjacent, type Point } from "./pathfinding";
 const DEFAULT_CONFIG: WorldConfig = {
   width: 64,
   height: 64,
-  ticksPerDay: 48,
+  ticksPerDay: 288,
   simSpeed: 1,
 };
+
+const MOVE_COOLDOWN = 3; // ticks between moves
+const HUNGER_DECAY = 0.003; // per tick
+const HUNGER_THRESHOLD = 0.3; // urgent eat
+const GATHER_TICKS: Record<ResourceType, number> = {
+  wood: 8,
+  ore: 10,
+  food: 6,
+  herb: 4,
+};
+const MONSTER_RESPAWN_TICKS = 120;
+
+function emptyInventory(): Record<ItemType, number> {
+  return {
+    wood: 0,
+    ore: 0,
+    food: 0,
+    herb: 0,
+    weapon: 0,
+    tool: 0,
+    potion: 0,
+    meal: 0,
+  };
+}
 
 export function createWorldState(
   agentDefs: AgentDef[],
@@ -30,7 +62,6 @@ export function createWorldState(
   const agents = agentDefs.map((def) => createAgent(def, mapData.locations));
   const monsters = createMonsters();
 
-  // Start at midnight → agents should be sleeping at home
   for (const agent of agents) {
     agent.sleeping = true;
     agent.currentGoal = "sleeping";
@@ -44,6 +75,7 @@ export function createWorldState(
     locations: mapData.locations,
     agents,
     monsters,
+    resourceNodes: mapData.resourceNodes,
     currentTick: 0,
     eventLog: [],
     paused: false,
@@ -61,6 +93,8 @@ export interface AgentDef {
   homeLocationId: string;
   workLocationId: string;
   schedule: WorldAgent["schedule"];
+  initialGold?: number;
+  initialSkills?: Partial<WorldAgent["skills"]>;
 }
 
 function createAgent(def: AgentDef, locations: WorldLocation[]): WorldAgent {
@@ -85,6 +119,17 @@ function createAgent(def: AgentDef, locations: WorldLocation[]): WorldAgent {
     nameKo: def.nameKo,
     color: def.color,
     sleeping: false,
+    inventory: emptyInventory(),
+    gold: def.initialGold ?? 10,
+    hunger: 0.8,
+    skills: {
+      combat: 0.3,
+      crafting: 0.3,
+      gathering: 0.3,
+      ...def.initialSkills,
+    },
+    moveCooldown: 0,
+    actionTicks: 0,
   };
 }
 
@@ -196,6 +241,13 @@ export function worldTick(world: WorldState): WorldEvent[] {
   const timeOfDay = getTimeOfDayLabel(hour);
   const events: WorldEvent[] = [];
 
+  // Regenerate resource nodes
+  for (const node of world.resourceNodes) {
+    if (node.amount < node.maxAmount) {
+      node.amount = Math.min(node.maxAmount, node.amount + node.regenRate);
+    }
+  }
+
   // Respawn dead monsters
   for (const m of world.monsters) {
     if (!m.alive && world.currentTick >= m.respawnTick) {
@@ -209,7 +261,7 @@ export function worldTick(world: WorldState): WorldEvent[] {
   // Move monsters randomly within territory
   for (const m of world.monsters) {
     if (!m.alive) continue;
-    if (Math.random() < 0.3) {
+    if (Math.random() < 0.15) {
       const dx = Math.floor(Math.random() * 3) - 1;
       const dy = Math.floor(Math.random() * 3) - 1;
       const nx = m.x + dx;
@@ -244,6 +296,8 @@ export function worldTick(world: WorldState): WorldEvent[] {
   return events;
 }
 
+// --- Agent Processing ---
+
 function processAgent(
   world: WorldState,
   agent: WorldAgent,
@@ -252,10 +306,25 @@ function processAgent(
 ): WorldEvent[] {
   const events: WorldEvent[] = [];
 
-  // 1. Determine goal from schedule
-  updateGoal(world, agent, hour);
+  // Hunger decay (only while awake)
+  if (!agent.sleeping) {
+    agent.hunger = Math.max(0, agent.hunger - HUNGER_DECAY);
+  }
 
-  // 2. Check for nearby monsters (combat)
+  // If performing an action (gathering/crafting), continue it
+  if (agent.actionTicks > 0) {
+    agent.actionTicks--;
+    if (agent.actionTicks === 0) {
+      const actionEvent = completeAction(world, agent, hour);
+      if (actionEvent) events.push(actionEvent);
+    }
+    return events;
+  }
+
+  // Determine goal (need-driven autonomous behavior)
+  updateGoalAutonomous(world, agent, hour);
+
+  // Check for nearby monsters (combat)
   const nearbyMonster = world.monsters.find(
     (m) =>
       m.alive && isAdjacent({ x: agent.x, y: agent.y }, { x: m.x, y: m.y }),
@@ -267,43 +336,123 @@ function processAgent(
     return events;
   }
 
-  // 3. Check for nearby agents (social interaction)
-  const nearbyAgent = world.agents.find(
-    (a) =>
-      a.id !== agent.id &&
-      !a.sleeping &&
-      isAdjacent({ x: agent.x, y: agent.y }, { x: a.x, y: a.y }),
-  );
+  // Check for nearby agents (social/trade/cooperate)
+  if (!agent.sleeping) {
+    const nearbyAgent = world.agents.find(
+      (a) =>
+        a.id !== agent.id &&
+        !a.sleeping &&
+        isAdjacent({ x: agent.x, y: agent.y }, { x: a.x, y: a.y }),
+    );
 
-  if (nearbyAgent && Math.random() < 0.15 && !agent.sleeping) {
-    const socialEvent = handleSocial(world, agent, nearbyAgent);
-    events.push(socialEvent);
-    return events;
+    if (nearbyAgent) {
+      // Try trade first
+      if (Math.random() < 0.08) {
+        const tradeEvent = tryTrade(world, agent, nearbyAgent, hour);
+        if (tradeEvent) {
+          events.push(tradeEvent);
+          return events;
+        }
+      }
+      // Cooperate/help
+      if (Math.random() < 0.06) {
+        const coopEvent = tryCooperate(world, agent, nearbyAgent, hour);
+        if (coopEvent) {
+          events.push(coopEvent);
+          return events;
+        }
+      }
+      // Regular social
+      if (Math.random() < 0.1) {
+        const socialEvent = handleSocial(world, agent, nearbyAgent);
+        events.push(socialEvent);
+        return events;
+      }
+    }
   }
 
-  // 4. Move toward goal
+  // Movement with cooldown
   if (agent.path.length > 0 && agent.pathIndex < agent.path.length) {
-    const next = agent.path[agent.pathIndex];
-    agent.x = next.x;
-    agent.y = next.y;
-    agent.pathIndex++;
+    if (agent.moveCooldown > 0) {
+      agent.moveCooldown--;
+    } else {
+      const next = agent.path[agent.pathIndex];
+      agent.x = next.x;
+      agent.y = next.y;
+      agent.pathIndex++;
+      agent.moveCooldown =
+        agent.hunger < 0.1 ? MOVE_COOLDOWN + 2 : MOVE_COOLDOWN;
 
-    // Arrived at home → start sleeping
-    if (
-      agent.currentGoal === "going_home" &&
-      agent.pathIndex >= agent.path.length
-    ) {
-      agent.currentGoal = "sleeping";
-      agent.currentGoalKo = "수면 중";
-      agent.sleeping = true;
+      // Arrived at home → start sleeping
+      if (
+        agent.currentGoal === "going_home" &&
+        agent.pathIndex >= agent.path.length
+      ) {
+        agent.currentGoal = "sleeping";
+        agent.currentGoalKo = "수면 중";
+        agent.sleeping = true;
+      }
+
+      // Arrived at resource node → start gathering
+      if (
+        agent.currentGoal === "gathering" &&
+        agent.pathIndex >= agent.path.length
+      ) {
+        const node = world.resourceNodes.find(
+          (n) => n.id === agent.actionTarget,
+        );
+        if (node && node.amount >= 1) {
+          agent.actionTicks = GATHER_TICKS[node.type];
+          agent.emoji = node.emoji;
+          const ev = makeEvent(
+            world,
+            agent,
+            hour,
+            "gather",
+            `${agent.nameKo}이(가) ${node.nameKo}을(를) 채집 중`,
+          );
+          events.push(ev);
+        } else {
+          agent.currentGoal = "idle";
+          agent.currentGoalKo = "자유 시간";
+          agent.actionTarget = undefined;
+        }
+      }
+
+      // Arrived at crafting location → start crafting
+      if (
+        agent.currentGoal === "crafting" &&
+        agent.pathIndex >= agent.path.length
+      ) {
+        const recipe = RECIPES.find((r) => r.id === agent.actionTarget);
+        if (recipe && hasIngredients(agent, recipe.inputs)) {
+          agent.actionTicks = recipe.ticks;
+          agent.emoji = "🔨";
+          const ev = makeEvent(
+            world,
+            agent,
+            hour,
+            "craft",
+            `${agent.nameKo}이(가) ${recipe.nameKo} 제작 중`,
+          );
+          events.push(ev);
+        } else {
+          agent.currentGoal = "idle";
+          agent.currentGoalKo = "자유 시간";
+          agent.actionTarget = undefined;
+        }
+      }
     }
   } else if (agent.currentGoal === "going_home") {
-    // Already at home location → sleep immediately
     agent.currentGoal = "sleeping";
     agent.currentGoalKo = "수면 중";
     agent.sleeping = true;
+  } else if (agent.currentGoal === "eating" && !agent.sleeping) {
+    // Eat food from inventory
+    const eatEvent = doEat(world, agent, hour);
+    if (eatEvent) events.push(eatEvent);
   } else if (!agent.sleeping) {
-    // Arrived at destination or no path - do routine behavior
+    // At destination - do routine behavior
     const routineEvent = handleRoutine(world, agent, hour, timeOfDay);
     if (routineEvent) events.push(routineEvent);
   }
@@ -318,47 +467,454 @@ function processAgent(
   return events;
 }
 
-function updateGoal(world: WorldState, agent: WorldAgent, hour: number) {
-  const scheduled = agent.schedule.find(
-    (s) => hour >= s.startHour && hour < s.endHour,
-  );
+// --- Autonomous Goal System ---
 
-  if (!scheduled) {
-    // Default: go home and sleep at night
-    if (hour >= 22 || hour < 5) {
-      if (
-        agent.currentGoal !== "sleeping" &&
-        agent.currentGoal !== "going_home"
-      ) {
-        agent.currentGoal = "going_home";
-        agent.currentGoalKo = "귀가 중";
-        agent.sleeping = false;
-        navigateTo(world, agent, agent.homeLocationId);
-      }
-    } else {
-      if (
-        agent.currentGoal === "sleeping" ||
-        agent.currentGoal === "going_home"
-      ) {
-        agent.sleeping = false;
-        agent.currentGoal = "idle";
-        agent.currentGoalKo = "자유 시간";
-      }
+function updateGoalAutonomous(
+  world: WorldState,
+  agent: WorldAgent,
+  hour: number,
+) {
+  // Night: go home and sleep
+  if (hour >= 22 || hour < 5) {
+    if (
+      agent.currentGoal !== "sleeping" &&
+      agent.currentGoal !== "going_home"
+    ) {
+      agent.currentGoal = "going_home";
+      agent.currentGoalKo = "귀가 중";
+      agent.sleeping = false;
+      navigateTo(world, agent, agent.homeLocationId);
     }
     return;
   }
 
-  // Wake up if sleeping and schedule starts
+  // Wake up if sleeping during day
   if (agent.sleeping || agent.currentGoal === "going_home") {
-    agent.sleeping = false;
+    if (hour >= 5 && hour < 22) {
+      agent.sleeping = false;
+    } else {
+      return;
+    }
   }
 
-  if (agent.currentGoal !== scheduled.activity) {
-    agent.currentGoal = scheduled.activity;
-    agent.currentGoalKo = scheduled.activityKo;
-    navigateTo(world, agent, scheduled.locationId);
+  // Skip if busy with action
+  if (agent.actionTicks > 0) return;
+  // Skip if already pathfinding (unless idle)
+  if (
+    agent.path.length > 0 &&
+    agent.pathIndex < agent.path.length &&
+    agent.currentGoal !== "idle"
+  )
+    return;
+
+  // Priority 1: Hunger — eat or hunt
+  if (agent.hunger < HUNGER_THRESHOLD) {
+    if (agent.inventory.food > 0 || agent.inventory.meal > 0) {
+      // Go home or tavern to eat
+      agent.currentGoal = "eating";
+      agent.currentGoalKo = "식사하러 이동 중";
+      agent.emoji = "🍖";
+      navigateTo(world, agent, "tavern");
+      return;
+    }
+    // No food — go hunting
+    const huntNode = findNearestResource(world, agent, "food");
+    if (huntNode) {
+      agent.currentGoal = "gathering";
+      agent.currentGoalKo = "사냥 중";
+      agent.emoji = "🏹";
+      agent.actionTarget = huntNode.id;
+      navigateToPoint(world, agent, { x: huntNode.x, y: huntNode.y });
+      return;
+    }
+    // Buy food if has gold
+    if (agent.gold >= RESOURCE_PRICES.food) {
+      agent.currentGoal = "buying_food";
+      agent.currentGoalKo = "음식 구매하러 이동 중";
+      agent.emoji = "💰";
+      navigateTo(world, agent, "market");
+      return;
+    }
+  }
+
+  // Priority 2: Job-based activity (schedule)
+  const scheduled = agent.schedule.find(
+    (s) => hour >= s.startHour && hour < s.endHour,
+  );
+
+  if (scheduled) {
+    if (agent.currentGoal !== scheduled.activity) {
+      agent.currentGoal = scheduled.activity;
+      agent.currentGoalKo = scheduled.activityKo;
+      navigateTo(world, agent, scheduled.locationId);
+    }
+    return;
+  }
+
+  // Priority 3: Craft if has materials (especially for craftsmen)
+  if (agent.currentGoal === "idle" || agent.currentGoal === "자유 시간") {
+    const recipe = findCraftableRecipe(agent);
+    if (recipe && agent.skills.crafting > 0.2) {
+      agent.currentGoal = "crafting";
+      agent.currentGoalKo = `${recipe.nameKo} 제작하러 이동 중`;
+      agent.emoji = "🔨";
+      agent.actionTarget = recipe.id;
+      navigateTo(world, agent, agent.workLocationId);
+      return;
+    }
+  }
+
+  // Priority 4: Gather resources (if idle and not hungry)
+  if (agent.currentGoal === "idle" && agent.hunger > 0.4) {
+    // Pick a resource based on agent role
+    const targetType = pickGatherTarget(agent);
+    if (targetType) {
+      const node = findNearestResource(world, agent, targetType);
+      if (node) {
+        agent.currentGoal = "gathering";
+        agent.currentGoalKo = `${node.nameKo} 채집하러 이동 중`;
+        agent.emoji = node.emoji;
+        agent.actionTarget = node.id;
+        navigateToPoint(world, agent, { x: node.x, y: node.y });
+        return;
+      }
+    }
+  }
+
+  // Priority 5: Think (if idle for too long)
+  if (agent.currentGoal === "idle" && Math.random() < 0.05) {
+    agent.currentGoal = "thinking";
+    agent.currentGoalKo = "고민 중";
+    agent.emoji = "💭";
+    // Wander to plaza
+    navigateTo(world, agent, "plaza");
+    return;
+  }
+
+  // Default: idle / free time
+  if (
+    agent.currentGoal !== "idle" &&
+    agent.currentGoal !== "thinking" &&
+    !scheduled &&
+    agent.path.length === 0
+  ) {
+    agent.currentGoal = "idle";
+    agent.currentGoalKo = "자유 시간";
   }
 }
+
+// --- Resource Helpers ---
+
+function findNearestResource(
+  world: WorldState,
+  agent: WorldAgent,
+  type: ResourceType,
+): ResourceNode | undefined {
+  return world.resourceNodes
+    .filter((n) => n.type === type && n.amount >= 1)
+    .sort(
+      (a, b) =>
+        distance({ x: agent.x, y: agent.y }, { x: a.x, y: a.y }) -
+        distance({ x: agent.x, y: agent.y }, { x: b.x, y: b.y }),
+    )[0];
+}
+
+function pickGatherTarget(agent: WorldAgent): ResourceType | null {
+  const roles = agent.seed.roles ?? [];
+  if (roles.includes("blacksmith") || roles.includes("craftsman")) {
+    if (agent.inventory.ore < 3) return "ore";
+    if (agent.inventory.wood < 2) return "wood";
+  }
+  if (roles.includes("healer") || roles.includes("priestess")) {
+    if (agent.inventory.herb < 3) return "herb";
+  }
+  if (roles.includes("warrior") || roles.includes("guardian")) {
+    if (agent.inventory.food < 2) return "food";
+    return "wood";
+  }
+  if (roles.includes("merchant") || roles.includes("trader")) {
+    // Merchants gather varied resources to sell
+    const lowest = (["wood", "ore", "herb"] as ResourceType[]).sort(
+      (a, b) => agent.inventory[a] - agent.inventory[b],
+    )[0];
+    return lowest;
+  }
+  // Default: gather wood or food
+  if (agent.inventory.food < 2) return "food";
+  if (Math.random() < 0.5) return "wood";
+  return null;
+}
+
+function findCraftableRecipe(agent: WorldAgent) {
+  return RECIPES.find((r) => hasIngredients(agent, r.inputs));
+}
+
+function hasIngredients(
+  agent: WorldAgent,
+  inputs: Partial<Record<ResourceType, number>>,
+): boolean {
+  for (const [res, amt] of Object.entries(inputs)) {
+    if ((agent.inventory[res as ResourceType] ?? 0) < (amt ?? 0)) return false;
+  }
+  return true;
+}
+
+function consumeIngredients(
+  agent: WorldAgent,
+  inputs: Partial<Record<ResourceType, number>>,
+) {
+  for (const [res, amt] of Object.entries(inputs)) {
+    agent.inventory[res as ItemType] -= amt ?? 0;
+  }
+}
+
+// --- Action Completion ---
+
+function completeAction(
+  world: WorldState,
+  agent: WorldAgent,
+  hour: number,
+): WorldEvent | null {
+  if (agent.currentGoal === "gathering" && agent.actionTarget) {
+    const node = world.resourceNodes.find((n) => n.id === agent.actionTarget);
+    if (node && node.amount >= 1) {
+      const amount = Math.min(
+        Math.floor(node.amount),
+        1 + Math.floor(agent.skills.gathering * 2),
+      );
+      node.amount -= amount;
+      agent.inventory[node.type] += amount;
+      agent.skills.gathering = Math.min(1, agent.skills.gathering + 0.005);
+      agent.currentGoal = "idle";
+      agent.currentGoalKo = "자유 시간";
+      agent.actionTarget = undefined;
+
+      // If gathered food, gain some food for hunting
+      if (node.type === "food") {
+        agent.emoji = "🏹";
+        return makeEvent(
+          world,
+          agent,
+          hour,
+          "gather",
+          `${agent.nameKo}이(가) 사냥에 성공! (고기 +${amount})`,
+        );
+      }
+
+      const gatherEmoji: Record<ResourceType, string> = {
+        wood: "🪓",
+        ore: "⛏️",
+        food: "🏹",
+        herb: "🌿",
+      };
+      agent.emoji = gatherEmoji[node.type] ?? "📦";
+      return makeEvent(
+        world,
+        agent,
+        hour,
+        "gather",
+        `${agent.nameKo}이(가) ${node.nameKo} ${amount}개 채집 완료`,
+      );
+    }
+  }
+
+  if (agent.currentGoal === "crafting" && agent.actionTarget) {
+    const recipe = RECIPES.find((r) => r.id === agent.actionTarget);
+    if (recipe && hasIngredients(agent, recipe.inputs)) {
+      consumeIngredients(agent, recipe.inputs);
+      agent.inventory[recipe.output] += 1;
+      agent.skills.crafting = Math.min(1, agent.skills.crafting + 0.008);
+      agent.currentGoal = "idle";
+      agent.currentGoalKo = "자유 시간";
+      agent.actionTarget = undefined;
+      agent.emoji = "✨";
+      return makeEvent(
+        world,
+        agent,
+        hour,
+        "craft",
+        `${agent.nameKo}이(가) ${recipe.nameKo} 제작 완료!`,
+      );
+    }
+  }
+
+  agent.currentGoal = "idle";
+  agent.currentGoalKo = "자유 시간";
+  agent.actionTarget = undefined;
+  return null;
+}
+
+// --- Eating ---
+
+function doEat(
+  world: WorldState,
+  agent: WorldAgent,
+  hour: number,
+): WorldEvent | null {
+  if (agent.inventory.meal > 0) {
+    agent.inventory.meal -= 1;
+    agent.hunger = Math.min(1, agent.hunger + 0.4);
+    agent.currentGoal = "idle";
+    agent.currentGoalKo = "자유 시간";
+    agent.emoji = "🍖";
+    return makeEvent(
+      world,
+      agent,
+      hour,
+      "eat",
+      `${agent.nameKo}이(가) 식사 완료 (포만감: ${Math.floor(agent.hunger * 100)}%)`,
+    );
+  }
+  if (agent.inventory.food > 0) {
+    agent.inventory.food -= 1;
+    agent.hunger = Math.min(1, agent.hunger + 0.35);
+    agent.currentGoal = "idle";
+    agent.currentGoalKo = "자유 시간";
+    agent.emoji = "🍖";
+    return makeEvent(
+      world,
+      agent,
+      hour,
+      "eat",
+      `${agent.nameKo}이(가) 고기를 구워 먹었다 (포만감: ${Math.floor(agent.hunger * 100)}%)`,
+    );
+  }
+  // No food at all - reset goal
+  agent.currentGoal = "idle";
+  agent.currentGoalKo = "자유 시간";
+  return null;
+}
+
+// --- Trading ---
+
+function tryTrade(
+  world: WorldState,
+  agent: WorldAgent,
+  other: WorldAgent,
+  hour: number,
+): WorldEvent | null {
+  // Find something agent has surplus, other needs
+  const resources: ResourceType[] = ["wood", "ore", "food", "herb"];
+  for (const res of resources) {
+    if (
+      agent.inventory[res] >= 3 &&
+      other.inventory[res] <= 1 &&
+      other.gold >= RESOURCE_PRICES[res]
+    ) {
+      const price = RESOURCE_PRICES[res];
+      const isMerchant = (agent.seed.roles ?? []).includes("merchant");
+      const finalPrice = isMerchant ? Math.ceil(price * 1.2) : price;
+      agent.inventory[res] -= 1;
+      agent.gold += finalPrice;
+      other.inventory[res] += 1;
+      other.gold -= finalPrice;
+
+      const resNames: Record<ResourceType, string> = {
+        wood: "나무",
+        ore: "광석",
+        food: "고기",
+        herb: "약초",
+      };
+      return makeEvent(
+        world,
+        agent,
+        hour,
+        "trade",
+        `${agent.nameKo}이(가) ${other.nameKo}에게 ${resNames[res]} 1개를 ${finalPrice}골드에 판매`,
+      );
+    }
+  }
+
+  // Try selling crafted items
+  const items: ItemType[] = ["weapon", "tool", "potion"];
+  for (const item of items) {
+    if (agent.inventory[item] >= 1 && other.gold >= RESOURCE_PRICES[item]) {
+      const price = RESOURCE_PRICES[item];
+      agent.inventory[item] -= 1;
+      agent.gold += price;
+      other.inventory[item] += 1;
+      other.gold -= price;
+
+      const itemNames: Record<string, string> = {
+        weapon: "무기",
+        tool: "도구",
+        potion: "물약",
+      };
+      return makeEvent(
+        world,
+        agent,
+        hour,
+        "trade",
+        `${agent.nameKo}이(가) ${other.nameKo}에게 ${itemNames[item]} 판매 (${price}G)`,
+      );
+    }
+  }
+
+  return null;
+}
+
+// --- Cooperation ---
+
+function tryCooperate(
+  world: WorldState,
+  agent: WorldAgent,
+  other: WorldAgent,
+  hour: number,
+): WorldEvent | null {
+  // Help hungry neighbor
+  if (other.hunger < 0.2 && agent.inventory.food > 1) {
+    agent.inventory.food -= 1;
+    other.inventory.food += 1;
+    agent.emoji = "🤝";
+    other.emoji = "🙏";
+    return makeEvent(
+      world,
+      agent,
+      hour,
+      "cooperate",
+      `${agent.nameKo}이(가) 배고픈 ${other.nameKo}에게 음식을 나눠주었다`,
+    );
+  }
+
+  // Mentor skill transfer
+  const agentRoles = agent.seed.roles ?? [];
+  const otherRoles = other.seed.roles ?? [];
+  if (
+    agentRoles.includes("sage") &&
+    agent.skills.crafting > other.skills.crafting + 0.1
+  ) {
+    other.skills.crafting = Math.min(1, other.skills.crafting + 0.01);
+    agent.emoji = "🤝";
+    return makeEvent(
+      world,
+      agent,
+      hour,
+      "cooperate",
+      `${agent.nameKo}이(가) ${other.nameKo}에게 기술을 전수 중`,
+    );
+  }
+
+  if (
+    agentRoles.includes("warrior") &&
+    other.actionTicks > 0 &&
+    other.currentGoal === "gathering"
+  ) {
+    // Help with gathering - reduce remaining ticks
+    other.actionTicks = Math.max(0, other.actionTicks - 3);
+    agent.emoji = "🤝";
+    return makeEvent(
+      world,
+      agent,
+      hour,
+      "cooperate",
+      `${agent.nameKo}이(가) ${other.nameKo}의 채집을 도와주고 있다`,
+    );
+  }
+
+  return null;
+}
+
+// --- Navigation ---
 
 function navigateTo(world: WorldState, agent: WorldAgent, locationId: string) {
   const location = world.locations.find((l) => l.id === locationId);
@@ -371,6 +927,14 @@ function navigateTo(world: WorldState, agent: WorldAgent, locationId: string) {
   );
   agent.path = path;
   agent.pathIndex = 0;
+  agent.moveCooldown = 0;
+}
+
+function navigateToPoint(world: WorldState, agent: WorldAgent, target: Point) {
+  const path = findPath(world.tiles, { x: agent.x, y: agent.y }, target);
+  agent.path = path;
+  agent.pathIndex = 0;
+  agent.moveCooldown = 0;
 }
 
 function isInVillage(world: WorldState, agent: WorldAgent): boolean {
@@ -392,6 +956,26 @@ function getAgentLocation(
     return world.locations.find((l) => l.id === tile.locationId);
   }
   return undefined;
+}
+
+// --- Event Helpers ---
+
+function makeEvent(
+  world: WorldState,
+  agent: WorldAgent,
+  hour: number,
+  type: WorldEvent["type"],
+  descKo: string,
+): WorldEvent {
+  return {
+    tick: world.currentTick,
+    hour,
+    agentId: agent.id,
+    agentName: agent.nameKo,
+    description: descKo,
+    descriptionKo: descKo,
+    type,
+  };
 }
 
 // --- Event Handlers ---
@@ -432,7 +1016,6 @@ function handleCombat(
   const response = processBehavior(agent.state, request, { mutateState: true });
   agent.lastAction = response.action;
 
-  // Combat resolution
   const actionType = response.action.type;
   let descKo: string;
   if (
@@ -440,11 +1023,18 @@ function handleCombat(
     actionType.includes("fight") ||
     actionType.includes("retaliat")
   ) {
-    monster.hp -= Math.floor(response.action.intensity * 30);
+    const dmg = Math.floor(
+      response.action.intensity * 30 * (1 + agent.skills.combat * 0.5),
+    );
+    monster.hp -= dmg;
     if (monster.hp <= 0) {
       monster.alive = false;
-      monster.respawnTick = world.currentTick + 20;
-      descKo = `${agent.nameKo}이(가) ${monster.nameKo}을(를) 처치했다!`;
+      monster.respawnTick = world.currentTick + MONSTER_RESPAWN_TICKS;
+      // Loot from combat
+      agent.inventory.food += 1;
+      agent.gold += Math.floor(3 + monster.strength * 5);
+      agent.skills.combat = Math.min(1, agent.skills.combat + 0.01);
+      descKo = `${agent.nameKo}이(가) ${monster.nameKo}을(를) 처치! (고기+1, 골드+${Math.floor(3 + monster.strength * 5)})`;
     } else {
       descKo = `${agent.nameKo}이(가) ${monster.nameKo}과(와) 전투 중 (HP: ${monster.hp}/${monster.maxHp})`;
     }
@@ -555,7 +1145,23 @@ function handleRoutine(
   const location = getAgentLocation(world, agent);
   if (!location) return null;
 
-  // Determine routine action based on location
+  // If at market and need to buy food
+  if (location.type === "market" && agent.currentGoal === "buying_food") {
+    if (agent.gold >= RESOURCE_PRICES.food) {
+      agent.gold -= RESOURCE_PRICES.food;
+      agent.inventory.food += 1;
+      agent.currentGoal = "eating";
+      agent.currentGoalKo = "식사 준비 중";
+      return makeEvent(
+        world,
+        agent,
+        hour,
+        "trade",
+        `${agent.nameKo}이(가) 시장에서 음식을 ${RESOURCE_PRICES.food}골드에 구매`,
+      );
+    }
+  }
+
   const routineActions: Record<
     string,
     { action: string; category: EventCategory; descKo: string; emoji: string }
@@ -613,7 +1219,7 @@ function handleRoutine(
   agent.emoji = routine.emoji;
 
   // Only generate events occasionally for routines
-  if (Math.random() > 0.2) return null;
+  if (Math.random() > 0.1) return null;
 
   const request: BehaviorRequest = {
     personaId: agent.id,

@@ -10,12 +10,19 @@ export type {
   WorldConfig,
   WorldState as WorldSimState,
   WorldEvent,
+  ResourceType,
+  CraftedItemType,
+  ItemType,
+  ResourceNode,
+  Recipe,
 } from "./types";
 export {
   tickToHour,
   hourToTimeString,
   getTimeOfDayLabel,
   getTimeOfDayLabelKo,
+  RECIPES,
+  RESOURCE_PRICES,
 } from "./types";
 
 export type { TileMapData } from "./tilemap";

@@ -1,4 +1,4 @@
-import type { WorldTile, WorldLocation, TileType } from "./types";
+import type { WorldTile, WorldLocation, TileType, ResourceNode } from "./types";
 
 const W = 64;
 const H = 64;
@@ -91,6 +91,7 @@ export interface TileMapData {
   height: number;
   tiles: WorldTile[][];
   locations: WorldLocation[];
+  resourceNodes: ResourceNode[];
 }
 
 export function createVillageMap(): TileMapData {
@@ -431,5 +432,203 @@ export function createVillageMap(): TileMapData {
     },
   ];
 
-  return { width: W, height: H, tiles, locations };
+  const resourceNodes = createResourceNodes();
+
+  return { width: W, height: H, tiles, locations, resourceNodes };
+}
+
+function createResourceNodes(): ResourceNode[] {
+  return [
+    // Wood - forest areas
+    {
+      id: "wood-1",
+      type: "wood",
+      x: 5,
+      y: 12,
+      amount: 10,
+      maxAmount: 10,
+      regenRate: 0.02,
+      emoji: "🌲",
+      nameKo: "나무",
+    },
+    {
+      id: "wood-2",
+      type: "wood",
+      x: 8,
+      y: 15,
+      amount: 10,
+      maxAmount: 10,
+      regenRate: 0.02,
+      emoji: "🌲",
+      nameKo: "나무",
+    },
+    {
+      id: "wood-3",
+      type: "wood",
+      x: 6,
+      y: 50,
+      amount: 10,
+      maxAmount: 10,
+      regenRate: 0.02,
+      emoji: "🌲",
+      nameKo: "나무",
+    },
+    {
+      id: "wood-4",
+      type: "wood",
+      x: 55,
+      y: 12,
+      amount: 10,
+      maxAmount: 10,
+      regenRate: 0.02,
+      emoji: "🌲",
+      nameKo: "나무",
+    },
+    {
+      id: "wood-5",
+      type: "wood",
+      x: 55,
+      y: 50,
+      amount: 10,
+      maxAmount: 10,
+      regenRate: 0.02,
+      emoji: "🌲",
+      nameKo: "나무",
+    },
+    {
+      id: "wood-6",
+      type: "wood",
+      x: 8,
+      y: 30,
+      amount: 10,
+      maxAmount: 10,
+      regenRate: 0.02,
+      emoji: "🌲",
+      nameKo: "나무",
+    },
+    // Ore - mountain/dungeon areas
+    {
+      id: "ore-1",
+      type: "ore",
+      x: 30,
+      y: 6,
+      amount: 8,
+      maxAmount: 8,
+      regenRate: 0.01,
+      emoji: "⛏️",
+      nameKo: "광석",
+    },
+    {
+      id: "ore-2",
+      type: "ore",
+      x: 33,
+      y: 6,
+      amount: 8,
+      maxAmount: 8,
+      regenRate: 0.01,
+      emoji: "⛏️",
+      nameKo: "광석",
+    },
+    {
+      id: "ore-3",
+      type: "ore",
+      x: 5,
+      y: 5,
+      amount: 8,
+      maxAmount: 8,
+      regenRate: 0.01,
+      emoji: "⛏️",
+      nameKo: "광석",
+    },
+    {
+      id: "ore-4",
+      type: "ore",
+      x: 58,
+      y: 5,
+      amount: 8,
+      maxAmount: 8,
+      regenRate: 0.01,
+      emoji: "⛏️",
+      nameKo: "광석",
+    },
+    // Food - hunting grounds (clearings)
+    {
+      id: "food-1",
+      type: "food",
+      x: 12,
+      y: 7,
+      amount: 6,
+      maxAmount: 6,
+      regenRate: 0.015,
+      emoji: "🦌",
+      nameKo: "사냥터",
+    },
+    {
+      id: "food-2",
+      type: "food",
+      x: 48,
+      y: 7,
+      amount: 6,
+      maxAmount: 6,
+      regenRate: 0.015,
+      emoji: "🦌",
+      nameKo: "사냥터",
+    },
+    {
+      id: "food-3",
+      type: "food",
+      x: 12,
+      y: 57,
+      amount: 6,
+      maxAmount: 6,
+      regenRate: 0.015,
+      emoji: "🦌",
+      nameKo: "사냥터",
+    },
+    {
+      id: "food-4",
+      type: "food",
+      x: 48,
+      y: 57,
+      amount: 6,
+      maxAmount: 6,
+      regenRate: 0.015,
+      emoji: "🦌",
+      nameKo: "사냥터",
+    },
+    // Herb - river/forest edges
+    {
+      id: "herb-1",
+      type: "herb",
+      x: 11,
+      y: 25,
+      amount: 5,
+      maxAmount: 5,
+      regenRate: 0.025,
+      emoji: "🌿",
+      nameKo: "약초",
+    },
+    {
+      id: "herb-2",
+      type: "herb",
+      x: 11,
+      y: 35,
+      amount: 5,
+      maxAmount: 5,
+      regenRate: 0.025,
+      emoji: "🌿",
+      nameKo: "약초",
+    },
+    {
+      id: "herb-3",
+      type: "herb",
+      x: 7,
+      y: 42,
+      amount: 5,
+      maxAmount: 5,
+      regenRate: 0.025,
+      emoji: "🌿",
+      nameKo: "약초",
+    },
+  ];
 }

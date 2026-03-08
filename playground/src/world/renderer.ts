@@ -5,6 +5,7 @@ import type {
   TileType,
   WorldSimState,
   WorldLocation,
+  ResourceNode,
 } from "soul-core";
 import { tickToHour } from "soul-core";
 
@@ -502,6 +503,99 @@ function drawAgents(
     ctx.fillStyle = "#ffffff";
     ctx.fillText(agent.nameKo, sx, sy + r + 2);
     ctx.restore();
+
+    // Hunger bar (only when low)
+    if (agent.hunger < 0.5 && !agent.sleeping) {
+      const barW = ts * 0.9;
+      const barH = 2.5 * camera.zoom;
+      const bx = sx - barW / 2;
+      const by = sy + r + 14 * camera.zoom;
+      ctx.fillStyle = "rgba(0,0,0,0.4)";
+      ctx.fillRect(bx, by, barW, barH);
+      const hRatio = agent.hunger;
+      ctx.fillStyle = hRatio > 0.3 ? "#FF9800" : "#f44336";
+      ctx.fillRect(bx, by, barW * hRatio, barH);
+    }
+
+    // Action progress bar (gathering/crafting)
+    if (agent.actionTicks > 0) {
+      const barW = ts * 0.9;
+      const barH = 2.5 * camera.zoom;
+      const bx = sx - barW / 2;
+      const by = sy - r - 20 * camera.zoom;
+      ctx.fillStyle = "rgba(0,0,0,0.5)";
+      ctx.fillRect(bx, by, barW, barH);
+      // We don't know max ticks here, show pulsing bar
+      const pulse = 0.5 + 0.5 * Math.sin(gt * 0.15);
+      ctx.fillStyle = `rgba(100,200,255,${0.5 + pulse * 0.3})`;
+      ctx.fillRect(bx, by, barW * pulse, barH);
+    }
+  }
+}
+
+function drawResourceNodes(
+  ctx: CanvasRenderingContext2D,
+  nodes: ResourceNode[],
+  camera: Camera,
+  canvasW: number,
+  canvasH: number,
+  gt: number,
+) {
+  const ts = TILE_SIZE * camera.zoom;
+  const offsetX = canvasW / 2 - camera.x * ts;
+  const offsetY = canvasH / 2 - camera.y * ts;
+
+  const nodeColors: Record<string, string> = {
+    wood: "#2d7a2d",
+    ore: "#7a7a8a",
+    food: "#8a6a3a",
+    herb: "#4a9a3a",
+  };
+
+  for (const node of nodes) {
+    const sx = offsetX + (node.x + 0.5) * ts;
+    const sy = offsetY + (node.y + 0.5) * ts;
+    if (sx < -40 || sx > canvasW + 40 || sy < -40 || sy > canvasH + 40)
+      continue;
+
+    const r = AGENT_RADIUS * camera.zoom * 0.75;
+    const color = nodeColors[node.type] ?? "#666";
+
+    // Background glow
+    const pulse = 0.3 + 0.1 * Math.sin(gt * 0.04 + node.x * 0.5);
+    ctx.fillStyle = `rgba(${parseInt(color.slice(1, 3), 16)},${parseInt(color.slice(3, 5), 16)},${parseInt(color.slice(5, 7), 16)},${pulse})`;
+    ctx.beginPath();
+    ctx.arc(sx, sy, r * 1.8, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Node body
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(sx, sy, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(0,0,0,0.3)";
+    ctx.lineWidth = 0.5;
+    ctx.stroke();
+
+    // Emoji
+    ctx.save();
+    ctx.font = `${Math.max(10, 13 * camera.zoom)}px sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "bottom";
+    ctx.fillText(node.emoji, sx, sy - r - 1);
+    ctx.restore();
+
+    // Amount bar
+    const barW = ts * 0.8;
+    const barH = 2.5 * camera.zoom;
+    const bx = sx - barW / 2;
+    const by = sy + r + 2;
+    ctx.fillStyle = "rgba(0,0,0,0.4)";
+    ctx.fillRect(bx, by, barW, barH);
+    const ratio = node.amount / node.maxAmount;
+    ctx.fillStyle =
+      ratio > 0.5 ? "#4CAF50" : ratio > 0.2 ? "#FF9800" : "#f44336";
+    ctx.fillRect(bx, by, barW * ratio, barH);
   }
 }
 
@@ -756,6 +850,18 @@ function drawMinimap(
     }
   }
 
+  // Resource nodes
+  const nodeMinimapColors: Record<string, string> = {
+    wood: "#4CAF50",
+    ore: "#9E9E9E",
+    food: "#8D6E63",
+    herb: "#66BB6A",
+  };
+  for (const node of world.resourceNodes) {
+    ctx.fillStyle = nodeMinimapColors[node.type] ?? "#888";
+    ctx.fillRect(mx + node.x * scale, my + node.y * scale, 2, 2);
+  }
+
   // Agents (larger dots)
   for (const agent of world.agents) {
     ctx.fillStyle = agent.color;
@@ -796,6 +902,14 @@ export function renderWorld(
 
   drawTiles(ctx, world, camera, canvasW, canvasH, vs.globalTick);
   drawLocationLabels(ctx, world.locations, camera, canvasW, canvasH);
+  drawResourceNodes(
+    ctx,
+    world.resourceNodes,
+    camera,
+    canvasW,
+    canvasH,
+    vs.globalTick,
+  );
   drawInteractions(ctx, world, vs, camera, canvasW, canvasH);
   drawMonsters(
     ctx,

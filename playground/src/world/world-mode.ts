@@ -190,17 +190,17 @@ function pauseSim() {
 // --- Time-based Speed ---
 
 const SPEED_LABELS: Record<string, string> = {
-  "0.25": "x4 빠르게",
-  "0.5": "x2 빠르게",
+  "0.15": "밤 (빠르게)",
+  "0.3": "새벽",
   "1": "",
-  "4": "x4 느리게",
 };
 
 function getSpeedMultiplier(hour: number): number {
-  if (hour >= 22 || hour < 5) return 0.25;
-  if (hour >= 5 && hour < 7) return 0.5;
-  if (hour >= 12 && hour < 18) return 4.0;
-  return 1.0;
+  // With 288 ticks/day (5min/tick), keep activity time at normal speed
+  // and compress sleep/transition time
+  if (hour >= 22 || hour < 5) return 0.15; // night: very fast
+  if (hour >= 5 && hour < 6) return 0.3; // dawn: fast
+  return 1.0; // day: normal
 }
 
 function restartTimer() {
@@ -230,6 +230,21 @@ function restartTimer() {
       }
       vs.lerpProgress = 0;
 
+      const EVENT_BUBBLE_CONFIG: Record<
+        string,
+        { emoji: string; color: string }
+      > = {
+        social: { emoji: "💬", color: "#7c8aff" },
+        combat: { emoji: "⚔️", color: "#ff6b6b" },
+        routine: { emoji: "🔄", color: "#4ecdc4" },
+        gather: { emoji: "⛏️", color: "#8BC34A" },
+        craft: { emoji: "🔨", color: "#FF9800" },
+        trade: { emoji: "💰", color: "#FFD700" },
+        eat: { emoji: "🍖", color: "#FF7043" },
+        cooperate: { emoji: "🤝", color: "#42A5F5" },
+        think: { emoji: "💭", color: "#AB47BC" },
+      };
+
       for (const ev of events) {
         const agent = world.agents.find((a) => a.id === ev.agentId);
         if (!agent) continue;
@@ -241,17 +256,30 @@ function restartTimer() {
           if (other) {
             addInteraction(vs, agent.id, other.id, "#7c8aff");
           }
-          addBubble(vs, agent.x, agent.y, ev.descriptionKo, "💬", "#7c8aff");
-        } else if (ev.type === "combat") {
-          addBubble(vs, agent.x, agent.y, ev.descriptionKo, "⚔️", "#ff6b6b");
-        } else if (ev.type === "routine") {
+        }
+        if (ev.type === "cooperate" || ev.type === "trade") {
+          const other = world.agents.find(
+            (a) => a.id !== agent.id && ev.descriptionKo.includes(a.nameKo),
+          );
+          if (other) {
+            addInteraction(
+              vs,
+              agent.id,
+              other.id,
+              EVENT_BUBBLE_CONFIG[ev.type]?.color ?? "#fff",
+            );
+          }
+        }
+
+        const config = EVENT_BUBBLE_CONFIG[ev.type];
+        if (config) {
           addBubble(
             vs,
             agent.x,
             agent.y,
             ev.descriptionKo,
-            agent.emoji,
-            "#4ecdc4",
+            config.emoji,
+            config.color,
           );
         }
       }
@@ -302,10 +330,14 @@ function buildNpcList() {
     card.className =
       "npc-card" + (world.selectedAgentId === agent.id ? " selected" : "");
     card.dataset.agentId = agent.id;
+    const hPct = Math.floor(agent.hunger * 100);
+    const hCol = hPct > 50 ? "#4CAF50" : hPct > 25 ? "#FF9800" : "#f44336";
     card.innerHTML = `
       <div class="npc-dot" style="background: ${agent.color}"></div>
       <span class="npc-emoji">${agent.emoji}</span>
       <span class="npc-name">${agent.nameKo}</span>
+      <span class="npc-hunger" style="color:${hCol}">${hPct}%</span>
+      <span class="npc-gold">💰${agent.gold}</span>
       <span class="npc-activity">${agent.currentGoalKo}</span>
     `;
     card.addEventListener("click", () => selectAgent(agent.id));
@@ -321,6 +353,15 @@ function updateNpcList() {
     if (!agent) return;
     card.querySelector(".npc-emoji")!.textContent = agent.emoji;
     card.querySelector(".npc-activity")!.textContent = agent.currentGoalKo;
+    const hPct = Math.floor(agent.hunger * 100);
+    const hCol = hPct > 50 ? "#4CAF50" : hPct > 25 ? "#FF9800" : "#f44336";
+    const hungerEl = card.querySelector<HTMLElement>(".npc-hunger");
+    if (hungerEl) {
+      hungerEl.textContent = `${hPct}%`;
+      hungerEl.style.color = hCol;
+    }
+    const goldEl = card.querySelector<HTMLElement>(".npc-gold");
+    if (goldEl) goldEl.textContent = `💰${agent.gold}`;
     card.classList.toggle("selected", world.selectedAgentId === agent.id);
   });
 }
@@ -350,6 +391,28 @@ function renderNpcDetail() {
 
   selectedNameEl.textContent = agent.nameKo;
 
+  const invItems =
+    Object.entries(agent.inventory)
+      .filter(([, v]) => v > 0)
+      .map(([k, v]) => {
+        const icons: Record<string, string> = {
+          wood: "🪵",
+          ore: "⛏️",
+          food: "🍖",
+          herb: "🌿",
+          weapon: "⚔️",
+          tool: "🔧",
+          potion: "🧪",
+          meal: "🍽️",
+        };
+        return `<span class="inv-item">${icons[k] ?? "📦"}${v}</span>`;
+      })
+      .join(" ") || '<span style="color:#555">없음</span>';
+
+  const hungerPct = Math.floor(agent.hunger * 100);
+  const hungerColor =
+    hungerPct > 50 ? "#4CAF50" : hungerPct > 25 ? "#FF9800" : "#f44336";
+
   npcDetail.innerHTML = `
     <div class="npc-detail-header">
       <span class="npc-detail-emoji">${agent.emoji}</span>
@@ -361,6 +424,20 @@ function renderNpcDetail() {
     <div class="npc-detail-goal">
       <span class="goal-label">현재:</span> ${agent.currentGoalKo}
       ${agent.lastAction ? `<span style="color:#ff9f43">[${agent.lastAction.type}]</span>` : ""}
+    </div>
+    <div class="npc-stats">
+      <div class="stat-row">
+        <span>💰 골드: ${agent.gold}</span>
+        <span style="color:${hungerColor}">🍖 포만감: ${hungerPct}%</span>
+      </div>
+      <div class="stat-row">
+        <span>⚔️ 전투: ${(agent.skills.combat * 100).toFixed(0)}%</span>
+        <span>🔨 제작: ${(agent.skills.crafting * 100).toFixed(0)}%</span>
+        <span>⛏️ 채집: ${(agent.skills.gathering * 100).toFixed(0)}%</span>
+      </div>
+      <div class="stat-row inv-row">
+        <span class="inv-label">인벤토리:</span> ${invItems}
+      </div>
     </div>
   `;
 

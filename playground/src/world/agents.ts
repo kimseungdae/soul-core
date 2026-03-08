@@ -1,4 +1,5 @@
-import type { AgentDef, PersonaSeed } from "soul-core";
+import type { AgentDef } from "soul-core";
+import type { PersonaSeed } from "soul-core";
 
 const kael: PersonaSeed = {
   version: 1,
@@ -123,6 +124,8 @@ export const AGENT_DEFS: AgentDef[] = [
     emoji: "⚔️",
     homeLocationId: "house_kael",
     workLocationId: "barracks",
+    initialGold: 15,
+    initialSkills: { combat: 0.7, crafting: 0.2, gathering: 0.4 },
     schedule: [
       {
         startHour: 5,
@@ -182,6 +185,8 @@ export const AGENT_DEFS: AgentDef[] = [
     emoji: "📖",
     homeLocationId: "house_lyra",
     workLocationId: "library",
+    initialGold: 12,
+    initialSkills: { combat: 0.1, crafting: 0.4, gathering: 0.3 },
     schedule: [
       {
         startHour: 5,
@@ -248,6 +253,8 @@ export const AGENT_DEFS: AgentDef[] = [
     emoji: "🗡️",
     homeLocationId: "house_vex",
     workLocationId: "market",
+    initialGold: 20,
+    initialSkills: { combat: 0.5, crafting: 0.3, gathering: 0.5 },
     schedule: [
       {
         startHour: 7,
@@ -307,6 +314,8 @@ export const AGENT_DEFS: AgentDef[] = [
     emoji: "✨",
     homeLocationId: "house_elena",
     workLocationId: "church",
+    initialGold: 8,
+    initialSkills: { combat: 0.1, crafting: 0.6, gathering: 0.5 },
     schedule: [
       {
         startHour: 5,
@@ -380,6 +389,8 @@ export const AGENT_DEFS: AgentDef[] = [
     emoji: "🔨",
     homeLocationId: "house_bjorn",
     workLocationId: "blacksmith",
+    initialGold: 25,
+    initialSkills: { combat: 0.3, crafting: 0.8, gathering: 0.5 },
     schedule: [
       {
         startHour: 5,
@@ -439,6 +450,8 @@ export const AGENT_DEFS: AgentDef[] = [
     emoji: "💰",
     homeLocationId: "house_mira",
     workLocationId: "market",
+    initialGold: 50,
+    initialSkills: { combat: 0.1, crafting: 0.3, gathering: 0.4 },
     schedule: [
       {
         startHour: 5,
@@ -498,6 +511,8 @@ export const AGENT_DEFS: AgentDef[] = [
     emoji: "🔮",
     homeLocationId: "house_lyra",
     workLocationId: "library",
+    initialGold: 15,
+    initialSkills: { combat: 0.2, crafting: 0.5, gathering: 0.3 },
     schedule: [
       {
         startHour: 6,
@@ -557,6 +572,8 @@ export const AGENT_DEFS: AgentDef[] = [
     emoji: "🔥",
     homeLocationId: "house_bjorn",
     workLocationId: "blacksmith",
+    initialGold: 5,
+    initialSkills: { combat: 0.3, crafting: 0.4, gathering: 0.6 },
     schedule: [
       {
         startHour: 5,

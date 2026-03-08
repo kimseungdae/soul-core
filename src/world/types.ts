@@ -3,6 +3,81 @@ import type { PersonaState } from "../state/index";
 import type { PersonaSeed } from "../seed/persona-seed";
 import type { ActionResult } from "../types/response";
 
+// --- Resource System ---
+
+export type ResourceType = "wood" | "ore" | "food" | "herb";
+
+export type CraftedItemType = "weapon" | "tool" | "potion" | "meal";
+
+export type ItemType = ResourceType | CraftedItemType;
+
+export interface ResourceNode {
+  id: string;
+  type: ResourceType;
+  x: number;
+  y: number;
+  amount: number;
+  maxAmount: number;
+  regenRate: number;
+  emoji: string;
+  nameKo: string;
+}
+
+export interface Recipe {
+  id: CraftedItemType;
+  inputs: Partial<Record<ResourceType, number>>;
+  output: CraftedItemType;
+  ticks: number;
+  skill: "crafting" | "combat" | "gathering";
+  nameKo: string;
+}
+
+export const RECIPES: Recipe[] = [
+  {
+    id: "weapon",
+    inputs: { ore: 2, wood: 1 },
+    output: "weapon",
+    ticks: 15,
+    skill: "crafting",
+    nameKo: "무기",
+  },
+  {
+    id: "tool",
+    inputs: { wood: 2 },
+    output: "tool",
+    ticks: 8,
+    skill: "crafting",
+    nameKo: "도구",
+  },
+  {
+    id: "potion",
+    inputs: { herb: 2 },
+    output: "potion",
+    ticks: 6,
+    skill: "crafting",
+    nameKo: "물약",
+  },
+  {
+    id: "meal",
+    inputs: { food: 1 },
+    output: "meal",
+    ticks: 3,
+    skill: "crafting",
+    nameKo: "식사",
+  },
+];
+
+export const RESOURCE_PRICES: Record<ItemType, number> = {
+  wood: 2,
+  ore: 5,
+  food: 3,
+  herb: 4,
+  weapon: 15,
+  tool: 8,
+  potion: 10,
+  meal: 5,
+};
+
 // --- Tile System ---
 
 export type TileType =
@@ -83,6 +158,14 @@ export interface WorldAgent {
   nameKo: string;
   color: string;
   sleeping: boolean;
+  // Deep behavior system
+  inventory: Record<ItemType, number>;
+  gold: number;
+  hunger: number; // 0~1 (0=starving, 1=full)
+  skills: { combat: number; crafting: number; gathering: number };
+  moveCooldown: number; // ticks until next move
+  actionTicks: number; // remaining ticks for current action (gathering/crafting)
+  actionTarget?: string; // resource node id or recipe id
 }
 
 // --- Monster System ---
@@ -120,6 +203,7 @@ export interface WorldState {
   locations: WorldLocation[];
   agents: WorldAgent[];
   monsters: Monster[];
+  resourceNodes: ResourceNode[];
   currentTick: Tick;
   eventLog: WorldEvent[];
   paused: boolean;
@@ -133,7 +217,19 @@ export interface WorldEvent {
   agentName: string;
   description: string;
   descriptionKo: string;
-  type: "move" | "social" | "combat" | "routine" | "rest" | "explore";
+  type:
+    | "move"
+    | "social"
+    | "combat"
+    | "routine"
+    | "rest"
+    | "explore"
+    | "gather"
+    | "craft"
+    | "trade"
+    | "eat"
+    | "cooperate"
+    | "think";
 }
 
 // --- Helpers ---
