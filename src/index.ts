@@ -86,3 +86,24 @@ export type {
   ConflictResolution,
   AlternativeConsidered,
 } from "./types/response";
+
+// Patterns
+export type {
+  BehaviorPattern,
+  PatternCategory,
+  PatternConditions,
+  PatternAction,
+  PatternStateEffect,
+  PatternMatch,
+} from "./patterns/index";
+export {
+  registerPattern,
+  registerPatterns,
+  getPatternsByCategory,
+  getAllPatterns,
+  clearPatterns,
+  getPatternById,
+  matchPatterns,
+  loadPrototypePatterns,
+  getPrototypePatterns,
+} from "./patterns/index";

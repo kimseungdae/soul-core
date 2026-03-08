@@ -1,0 +1,47 @@
+import type { BehaviorPattern } from "../types";
+
+const patterns: BehaviorPattern[] = [
+  {
+    id: "routine.daily.social_grooming",
+    category: "routine",
+    subcategory: "daily_habits",
+    description:
+      "Extraverted character seeks social interaction during idle time",
+    conditions: {
+      traits: { extraversion: { min: 0.6 } },
+      needsBelow: { belonging: 0.5 },
+    },
+    actions: [
+      { type: "socialize", weight: 0.5 },
+      { type: "greet", weight: 0.3 },
+      { type: "tell_story", weight: 0.2 },
+    ],
+    stateEffects: {
+      emotions: { joy: 0.1 },
+      needs: { belonging: 0.1, stimulation: 0.05 },
+    },
+    priority: 3,
+  },
+  {
+    id: "routine.daily.solitary_activity",
+    category: "routine",
+    subcategory: "daily_habits",
+    description: "Introverted character prefers solitary activities",
+    conditions: {
+      traits: { extraversion: { max: 0.4 } },
+      needsBelow: { rest: 0.5 },
+    },
+    actions: [
+      { type: "rest", weight: 0.4 },
+      { type: "meditate", weight: 0.3 },
+      { type: "read", weight: 0.3 },
+    ],
+    stateEffects: {
+      emotions: { satisfaction: 0.1 },
+      needs: { rest: 0.15, autonomy: 0.05 },
+    },
+    priority: 3,
+  },
+];
+
+export default patterns;

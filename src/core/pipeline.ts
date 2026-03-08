@@ -75,6 +75,7 @@ export function processBehavior(
         reason: c.reason,
       })),
       alternativesConsidered: selection.alternatives,
+      matchedPattern: selection.matchedPatternId,
     },
   };
 

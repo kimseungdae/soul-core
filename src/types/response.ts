@@ -60,6 +60,7 @@ export interface ResponseTrace {
   dominantMotive: string;
   conflictsResolved: ConflictResolution[];
   alternativesConsidered: AlternativeConsidered[];
+  matchedPattern?: string;
 }
 
 export interface BehaviorResponse {

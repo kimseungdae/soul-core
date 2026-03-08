@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.3.0] - 2026-03-08
+
+### Added
+
+- Behavior pattern system with type definitions, registry, matcher, and loader
+- 18 prototype patterns across 7 categories: social (5), combat (3), survival (2), emotional (2), cognitive (2), moral (2), routine (2)
+- Pattern matching engine: trait conditions, emotion conditions, appraisal tag matching, need thresholds
+- Pattern-enhanced action selection: patterns provide richer parameterized actions with fallback to motive-based generation
+- `matchedPattern` field in response trace for pattern traceability
+- 3 new emotion types: contempt, determination, anxiety
+- JSON data files in `data/patterns/` for each category (prototype, expandable)
+- 12 pattern system tests (registry, matcher, pipeline integration)
+- 45 total tests passing
+
 ## [0.2.0] - 2026-03-08
 
 ### Added

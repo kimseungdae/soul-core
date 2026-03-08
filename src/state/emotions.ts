@@ -20,7 +20,10 @@ export type EmotionType =
   | "frustration"
   | "affection"
   | "envy"
-  | "loneliness";
+  | "loneliness"
+  | "contempt"
+  | "determination"
+  | "anxiety";
 
 export interface Emotion {
   type: EmotionType;

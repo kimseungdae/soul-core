@@ -1,0 +1,49 @@
+import type { BehaviorPattern } from "../types";
+
+const patterns: BehaviorPattern[] = [
+  {
+    id: "emotional.grief.open_mourning",
+    category: "emotional",
+    subcategory: "grief_response",
+    description: "Expressive character openly mourns a loss",
+    conditions: {
+      appraisalTags: ["loss"],
+      traits: {
+        extraversion: { min: 0.5 },
+        emotionalStability: { max: 0.5 },
+      },
+    },
+    actions: [
+      { type: "mourn", weight: 0.6, params: { display: "public" } },
+      { type: "seek_comfort", weight: 0.3 },
+      { type: "cry", weight: 0.1 },
+    ],
+    stateEffects: {
+      emotions: { distress: 0.6, loneliness: 0.4 },
+      needs: { belonging: -0.2 },
+    },
+    priority: 7,
+  },
+  {
+    id: "emotional.grief.stoic_endurance",
+    category: "emotional",
+    subcategory: "grief_response",
+    description: "Stoic character internalizes grief silently",
+    conditions: {
+      appraisalTags: ["loss"],
+      traits: { emotionalStability: { min: 0.6 } },
+    },
+    actions: [
+      { type: "endure", weight: 0.6, params: { display: "private" } },
+      { type: "withdraw", weight: 0.3 },
+      { type: "focus_on_task", weight: 0.1 },
+    ],
+    stateEffects: {
+      emotions: { distress: 0.3 },
+      needs: { autonomy: 0.05 },
+    },
+    priority: 6,
+  },
+];
+
+export default patterns;

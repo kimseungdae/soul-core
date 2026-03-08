@@ -1,0 +1,75 @@
+[
+  {
+    "id": "combat.threat.fight_response",
+    "category": "combat",
+    "subcategory": "threat_response",
+    "description": "Brave, dominant character stands ground against physical threat",
+    "conditions": {
+      "appraisalTags": ["physical_threat"],
+      "traits": {
+        "socialDominance": { "min": 0.5 },
+        "threatSensitivity": { "max": 0.6 }
+      }
+    },
+    "actions": [
+      { "type": "attack", "weight": 0.5 },
+      {
+        "type": "intimidation",
+        "weight": 0.3,
+        "params": { "stance": "aggressive" }
+      },
+      { "type": "defend", "weight": 0.2 }
+    ],
+    "stateEffects": {
+      "emotions": { "anger": 0.3, "determination": 0.4 },
+      "needs": { "safety": -0.2, "fatigue": -0.15 }
+    },
+    "priority": 9
+  },
+  {
+    "id": "combat.threat.flee_response",
+    "category": "combat",
+    "subcategory": "threat_response",
+    "description": "High threat sensitivity character flees from danger",
+    "conditions": {
+      "appraisalTags": ["physical_threat"],
+      "traits": {
+        "threatSensitivity": { "min": 0.6 },
+        "socialDominance": { "max": 0.4 }
+      }
+    },
+    "actions": [
+      { "type": "flee", "weight": 0.7 },
+      { "type": "hide", "weight": 0.2 },
+      { "type": "call_help", "weight": 0.1 }
+    ],
+    "stateEffects": {
+      "emotions": { "fear": 0.6 },
+      "needs": { "safety": 0.1 }
+    },
+    "priority": 8
+  },
+  {
+    "id": "combat.threat.protect_others",
+    "category": "combat",
+    "subcategory": "threat_response",
+    "description": "Protector-identity character shields others from threat",
+    "conditions": {
+      "appraisalTags": ["physical_threat"],
+      "traits": {
+        "empathy": { "min": 0.5 },
+        "socialDominance": { "min": 0.4 }
+      }
+    },
+    "actions": [
+      { "type": "protect", "weight": 0.6, "params": { "selfSacrifice": true } },
+      { "type": "defend", "weight": 0.3 },
+      { "type": "call_help", "weight": 0.1 }
+    ],
+    "stateEffects": {
+      "emotions": { "determination": 0.5, "fear": 0.2 },
+      "needs": { "safety": -0.3 }
+    },
+    "priority": 10
+  }
+]

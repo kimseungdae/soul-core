@@ -1,0 +1,55 @@
+[
+  {
+    "id": "social.betrayal.rage_confrontation",
+    "category": "social",
+    "subcategory": "betrayal_response",
+    "description": "Character with strong loyalty values confronts betrayer with rage",
+    "conditions": {
+      "appraisalTags": ["betrayal"],
+      "traits": {
+        "impulseControl": { "max": 0.5 }
+      }
+    },
+    "actions": [
+      { "type": "confront", "weight": 0.6, "params": { "tone": "rage" } },
+      { "type": "attack", "weight": 0.3 },
+      {
+        "type": "verbal_retaliation",
+        "weight": 0.1,
+        "params": { "tone": "aggressive" }
+      }
+    ],
+    "stateEffects": {
+      "emotions": { "anger": 0.8, "distress": 0.4 },
+      "relationships": { "source": { "trust": -0.5, "resentment": 0.4 } }
+    },
+    "priority": 9
+  },
+  {
+    "id": "social.betrayal.cold_cutoff",
+    "category": "social",
+    "subcategory": "betrayal_response",
+    "description": "Controlled character coldly severs relationship after betrayal",
+    "conditions": {
+      "appraisalTags": ["betrayal"],
+      "traits": {
+        "impulseControl": { "min": 0.5 },
+        "emotionalStability": { "min": 0.4 }
+      }
+    },
+    "actions": [
+      { "type": "dismiss", "weight": 0.5, "params": { "tone": "cold" } },
+      { "type": "walk_away", "weight": 0.4 },
+      {
+        "type": "verbal_retaliation",
+        "weight": 0.1,
+        "params": { "tone": "cold_anger" }
+      }
+    ],
+    "stateEffects": {
+      "emotions": { "contempt": 0.5, "distress": 0.3 },
+      "relationships": { "source": { "trust": -0.6, "affection": -0.4 } }
+    },
+    "priority": 8
+  }
+]

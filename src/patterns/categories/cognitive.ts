@@ -1,0 +1,52 @@
+import type { BehaviorPattern } from "../types";
+
+const patterns: BehaviorPattern[] = [
+  {
+    id: "cognitive.discovery.eager_investigation",
+    category: "cognitive",
+    subcategory: "discovery_response",
+    description: "Curious character eagerly investigates novel stimulus",
+    conditions: {
+      appraisalTags: ["novel_stimulus", "opportunity"],
+      traits: {
+        noveltySeeking: { min: 0.5 },
+        openness: { min: 0.5 },
+      },
+    },
+    actions: [
+      { type: "investigate", weight: 0.6 },
+      { type: "examine", weight: 0.3 },
+      { type: "experiment", weight: 0.1 },
+    ],
+    stateEffects: {
+      emotions: { hope: 0.3, joy: 0.1 },
+      needs: { stimulation: 0.15 },
+    },
+    priority: 6,
+  },
+  {
+    id: "cognitive.discovery.cautious_observation",
+    category: "cognitive",
+    subcategory: "discovery_response",
+    description: "Cautious character carefully observes before engaging",
+    conditions: {
+      appraisalTags: ["novel_stimulus"],
+      traits: {
+        noveltySeeking: { max: 0.5 },
+        threatSensitivity: { min: 0.4 },
+      },
+    },
+    actions: [
+      { type: "observe", weight: 0.6 },
+      { type: "assess", weight: 0.3 },
+      { type: "retreat", weight: 0.1 },
+    ],
+    stateEffects: {
+      emotions: { anxiety: 0.1 },
+      needs: { safety: 0.05 },
+    },
+    priority: 5,
+  },
+];
+
+export default patterns;

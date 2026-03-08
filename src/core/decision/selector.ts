@@ -4,11 +4,14 @@ import type { ArbitrationResult } from "../conflict/arbitrator";
 import type { AppraisalResult } from "../appraisal/appraiser";
 import type { WorldState } from "../../types/request";
 import type { ActionResult, AlternativeConsidered } from "../../types/response";
+import { getAllPatterns } from "../../patterns/registry";
+import { matchPatterns } from "../../patterns/matcher";
 
 export interface SelectionResult {
   action: ActionResult;
   selectedMotive: Motive;
   alternatives: AlternativeConsidered[];
+  matchedPatternId?: string;
 }
 
 export function selectAction(
@@ -40,10 +43,34 @@ export function selectAction(
 
   const candidates = rankedMotives.slice(0, 5);
   const feasible = candidates.filter((m) => isFeasible(m, world));
-
   const selected = feasible.length > 0 ? feasible[0] : candidates[0];
 
-  const action = motiveToAction(selected, state, appraisal);
+  // Try pattern matching for richer action parameterization
+  const allPatterns = getAllPatterns();
+  const patternMatches = matchPatterns(state, appraisal, allPatterns);
+  const topPattern = patternMatches.length > 0 ? patternMatches[0] : null;
+
+  let action: ActionResult;
+  let matchedPatternId: string | undefined;
+
+  if (topPattern && topPattern.score > 0.5) {
+    const pa = topPattern.selectedAction;
+    action = {
+      type: pa.type,
+      target: selected.targetId,
+      intensity: Math.min(selected.score / 100, 1),
+      params: { ...pa.params },
+    };
+    matchedPatternId = topPattern.pattern.id;
+
+    // Feasibility: no attack in safeZone
+    if (action.type === "attack" && world.safeZone) {
+      action = motiveToAction(selected, state, appraisal);
+      matchedPatternId = undefined;
+    }
+  } else {
+    action = motiveToAction(selected, state, appraisal);
+  }
 
   const alternatives: AlternativeConsidered[] = candidates
     .filter((m) => m.id !== selected.id)
@@ -53,7 +80,18 @@ export function selectAction(
       rejected: rejectReason(m, selected, world),
     }));
 
-  return { action, selectedMotive: selected, alternatives };
+  // Add pattern alternatives if any
+  if (patternMatches.length > 1) {
+    for (const pm of patternMatches.slice(1, 3)) {
+      alternatives.push({
+        action: pm.selectedAction.type,
+        score: Math.round(pm.score * 100),
+        rejected: `pattern outscored by ${topPattern?.pattern.id ?? "motive"}`,
+      });
+    }
+  }
+
+  return { action, selectedMotive: selected, alternatives, matchedPatternId };
 }
 
 function isFeasible(motive: Motive, world: WorldState): boolean {
