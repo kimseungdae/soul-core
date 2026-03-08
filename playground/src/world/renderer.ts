@@ -394,6 +394,18 @@ function drawAgents(
     )
       continue;
 
+    // Dead NPC — show skull and skip rest
+    if (!agent.alive) {
+      ctx.save();
+      ctx.globalAlpha = 0.4 + 0.2 * Math.sin(gt * 0.05);
+      ctx.font = `${Math.max(14, 18 * camera.zoom)}px sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("💀", sx, sy);
+      ctx.restore();
+      continue;
+    }
+
     // Shadow
     ctx.fillStyle = "rgba(0,0,0,0.3)";
     ctx.beginPath();

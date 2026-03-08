@@ -30,9 +30,10 @@ const DEFAULT_CONFIG: WorldConfig = {
 };
 
 const MOVE_COOLDOWN = 3;
-const STARVATION_HP_DECAY = 0.5; // hp loss per tick when starving
-const HUNGER_DECAY = 0.003; // per tick
-const HUNGER_THRESHOLD = 0.3; // urgent eat
+const STARVATION_HP_DECAY = 1.5; // hp loss per tick when starving
+const HUNGER_DECAY = 0.008; // per tick (~100 ticks = 0→empty)
+const HUNGER_THRESHOLD = 0.4; // urgent eat
+const RESPAWN_DELAY = 60; // ticks before new NPC spawns at church
 const GATHER_TICKS: Record<ResourceType, number> = {
   wood: 8,
   ore: 10,
@@ -82,6 +83,8 @@ export function createWorldState(
     paused: false,
     selectedAgentId: null,
     marketPrices: { ...RESOURCE_PRICES },
+    chiefId: agents[0]?.id ?? "",
+    deathCount: 0,
   };
 }
 
@@ -121,6 +124,8 @@ function createAgent(def: AgentDef, locations: WorldLocation[]): WorldAgent {
     nameKo: def.nameKo,
     color: def.color,
     sleeping: false,
+    alive: true,
+    deathTick: -1,
     inventory: emptyInventory(),
     gold: def.initialGold ?? 10,
     hunger: 0.8,
@@ -130,6 +135,133 @@ function createAgent(def: AgentDef, locations: WorldLocation[]): WorldAgent {
       crafting: 0.3,
       gathering: 0.3,
       ...def.initialSkills,
+    },
+    moveCooldown: 0,
+    actionTicks: 0,
+    maxActionTicks: 0,
+    toolUses: 0,
+    weaponUses: 0,
+    stunTicks: 0,
+    fatigue: 0,
+    previousGoal: "idle",
+    debts: {},
+  };
+}
+
+// --- Respawn Pool ---
+
+const RESPAWN_NAMES: {
+  name: string;
+  nameKo: string;
+  emoji: string;
+  roles: string[];
+}[] = [
+  {
+    name: "Arin",
+    nameKo: "아린",
+    emoji: "🗡️",
+    roles: ["warrior", "adventurer"],
+  },
+  { name: "Sora", nameKo: "소라", emoji: "🌿", roles: ["healer", "herbalist"] },
+  {
+    name: "Dain",
+    nameKo: "다인",
+    emoji: "⛏️",
+    roles: ["blacksmith", "craftsman"],
+  },
+  { name: "Hana", nameKo: "하나", emoji: "🏹", roles: ["hunter", "ranger"] },
+  { name: "Riku", nameKo: "리쿠", emoji: "⚔️", roles: ["warrior", "guardian"] },
+  {
+    name: "Yuri",
+    nameKo: "유리",
+    emoji: "📖",
+    roles: ["scholar", "apprentice"],
+  },
+  { name: "Kai", nameKo: "카이", emoji: "🔥", roles: ["adventurer", "rogue"] },
+  { name: "Nari", nameKo: "나리", emoji: "✨", roles: ["healer", "priestess"] },
+  { name: "Zen", nameKo: "젠", emoji: "💰", roles: ["merchant", "trader"] },
+  {
+    name: "Minho",
+    nameKo: "민호",
+    emoji: "🔨",
+    roles: ["craftsman", "apprentice"],
+  },
+];
+
+const RESPAWN_COLORS = [
+  "#e74c3c",
+  "#9b59b6",
+  "#2ecc71",
+  "#f1c40f",
+  "#e67e22",
+  "#1abc9c",
+  "#3498db",
+  "#fd79a8",
+  "#00cec9",
+  "#6c5ce7",
+  "#d63031",
+  "#00b894",
+];
+
+function respawnAgent(
+  deadAgent: WorldAgent,
+  church: WorldLocation | undefined,
+  world: WorldState,
+): WorldAgent {
+  const spawnPos = church ? church.entrance : { x: 31, y: 20 };
+  const idx = world.deathCount % RESPAWN_NAMES.length;
+  const template = RESPAWN_NAMES[idx];
+  const uniqueId = `npc-${world.deathCount}-${world.currentTick}`;
+
+  const seed: PersonaSeed = {
+    version: 1,
+    id: uniqueId,
+    name: template.name,
+    bigFive: [
+      0.3 + Math.random() * 0.5,
+      0.3 + Math.random() * 0.5,
+      0.3 + Math.random() * 0.5,
+      0.3 + Math.random() * 0.5,
+      0.1 + Math.random() * 0.5,
+    ],
+    coreValues: ["survival", "community"],
+    selfConcept: "I am a newcomer seeking purpose",
+    roles: template.roles,
+    temperament: { valence: 0, arousal: 0.4 },
+  };
+
+  // Inherit dead agent's home/work locations
+  const homeId = deadAgent.homeLocationId;
+  const workId = deadAgent.workLocationId;
+
+  return {
+    id: uniqueId,
+    personaKey: uniqueId,
+    seed,
+    state: hydratePersona(seed),
+    x: spawnPos.x,
+    y: spawnPos.y,
+    path: [],
+    pathIndex: 0,
+    currentGoal: "idle",
+    currentGoalKo: "방금 태어남",
+    homeLocationId: homeId,
+    workLocationId: workId,
+    schedule: deadAgent.schedule,
+    emoji: template.emoji,
+    nameKo: template.nameKo,
+    color: RESPAWN_COLORS[world.deathCount % RESPAWN_COLORS.length],
+    sleeping: false,
+    alive: true,
+    deathTick: -1,
+    inventory: emptyInventory(),
+    gold: 5,
+    hunger: 0.7,
+    hp: 100,
+    skills: {
+      combat: 0.2 + Math.random() * 0.2,
+      crafting: 0.2 + Math.random() * 0.2,
+      gathering: 0.3 + Math.random() * 0.2,
     },
     moveCooldown: 0,
     actionTicks: 0,
@@ -291,6 +423,29 @@ export function worldTick(world: WorldState): WorldEvent[] {
     }
   }
 
+  // Respawn dead NPCs as new characters at church
+  const church = world.locations.find((l) => l.type === "church");
+  for (let i = 0; i < world.agents.length; i++) {
+    const agent = world.agents[i];
+    if (
+      !agent.alive &&
+      agent.deathTick > 0 &&
+      world.currentTick - agent.deathTick >= RESPAWN_DELAY
+    ) {
+      const newAgent = respawnAgent(agent, church, world);
+      world.agents[i] = newAgent;
+      events.push({
+        tick: world.currentTick,
+        hour,
+        agentId: newAgent.id,
+        agentName: newAgent.nameKo,
+        description: `New NPC born at church`,
+        descriptionKo: `✨ ${newAgent.nameKo}이(가) 빛의 신전에서 태어났다!`,
+        type: "routine",
+      });
+    }
+  }
+
   // Move monsters randomly within territory
   for (const m of world.monsters) {
     if (!m.alive) continue;
@@ -313,6 +468,9 @@ export function worldTick(world: WorldState): WorldEvent[] {
       }
     }
   }
+
+  // Chief monster quest system
+  tickChiefQuest(world, events, hour);
 
   // Village project tick (Step 22)
   tickVillageProject(world, events, hour);
@@ -377,10 +535,33 @@ function processAgent(
 ): WorldEvent[] {
   const events: WorldEvent[] = [];
 
+  // Dead NPC — skip processing
+  if (!agent.alive) return events;
+
   // Stunned (knocked out, hp was 0)
   if (agent.stunTicks > 0) {
     agent.stunTicks--;
     agent.emoji = "💫";
+    // Still starving while stunned
+    agent.hunger = Math.max(0, agent.hunger - HUNGER_DECAY * 0.5);
+    if (agent.hunger <= 0) {
+      agent.alive = false;
+      agent.deathTick = world.currentTick;
+      agent.emoji = "💀";
+      agent.currentGoal = "dead";
+      agent.currentGoalKo = "사망";
+      events.push(
+        makeEvent(
+          world,
+          agent,
+          hour,
+          "death",
+          `💀 ${agent.nameKo}이(가) 기절 중 굶어 사망했다...`,
+        ),
+      );
+      world.deathCount++;
+      return events;
+    }
     if (agent.stunTicks === 0) {
       agent.hp = 20;
       agent.currentGoal = "going_home";
@@ -405,9 +586,37 @@ function processAgent(
     );
   }
 
-  // Hunger decay (only while awake)
-  if (!agent.sleeping) {
+  // Hunger decay (always, slower when sleeping)
+  if (agent.sleeping) {
+    agent.hunger = Math.max(0, agent.hunger - HUNGER_DECAY * 0.3);
+  } else {
     agent.hunger = Math.max(0, agent.hunger - HUNGER_DECAY);
+  }
+
+  // Starvation: hunger=0 → HP decays
+  if (agent.hunger <= 0) {
+    agent.hp = Math.max(0, agent.hp - STARVATION_HP_DECAY);
+    if (agent.hp <= 0) {
+      // Death
+      agent.alive = false;
+      agent.deathTick = world.currentTick;
+      agent.emoji = "💀";
+      agent.currentGoal = "dead";
+      agent.currentGoalKo = "사망";
+      agent.path = [];
+      agent.actionTicks = 0;
+      events.push(
+        makeEvent(
+          world,
+          agent,
+          hour,
+          "death",
+          `💀 ${agent.nameKo}이(가) 굶주림으로 사망했다...`,
+        ),
+      );
+      world.deathCount++;
+      return events;
+    }
   }
 
   // Fatigue system (Step 9)
@@ -495,24 +704,24 @@ function processAgent(
     const nearbyAgent = world.agents.find(
       (a) =>
         a.id !== agent.id &&
+        a.alive &&
         !a.sleeping &&
         isAdjacent({ x: agent.x, y: agent.y }, { x: a.x, y: a.y }),
     );
 
     if (nearbyAgent) {
       const ext = agent.state.traits.bigFive.extraversion;
-      // Try trade first (extraversion boosts)
-      if (Math.random() < 0.05 + ext * 0.06) {
-        const tradeEvent = tryTrade(world, agent, nearbyAgent, hour);
-        if (tradeEvent) {
-          events.push(tradeEvent);
-          return events;
-        }
-      }
-      // Cooperate/help (agreeableness boosts)
+      // Skip most social if hungry or on a mission
+      const isBusy =
+        agent.hunger < 0.4 ||
+        agent.currentGoal === "gathering" ||
+        agent.currentGoal === "hunting_monster" ||
+        agent.currentGoal === "quest_hunt";
+
+      // Always allow cooperation with hungry/injured neighbors
       if (
         Math.random() <
-        0.03 + agent.state.traits.bigFive.agreeableness * 0.06
+        0.02 + agent.state.traits.bigFive.agreeableness * 0.03
       ) {
         const coopEvent = tryCooperate(world, agent, nearbyAgent, hour);
         if (coopEvent) {
@@ -520,40 +729,56 @@ function processAgent(
           return events;
         }
       }
-      // Hunt party proposal (Step 20)
-      if (Math.random() < 0.04) {
-        const huntEvent = tryFormHuntParty(world, agent, nearbyAgent, hour);
-        if (huntEvent) {
-          events.push(huntEvent);
+
+      if (!isBusy) {
+        // Trade (rare)
+        if (Math.random() < 0.02 + ext * 0.02) {
+          const tradeEvent = tryTrade(world, agent, nearbyAgent, hour);
+          if (tradeEvent) {
+            events.push(tradeEvent);
+            return events;
+          }
+        }
+        // Hunt party proposal
+        if (Math.random() < 0.03) {
+          const huntEvent = tryFormHuntParty(world, agent, nearbyAgent, hour);
+          if (huntEvent) {
+            events.push(huntEvent);
+            return events;
+          }
+        }
+        // Resource exchange (rare)
+        if (Math.random() < 0.02) {
+          const exchangeEvent = tryResourceExchange(
+            world,
+            agent,
+            nearbyAgent,
+            hour,
+          );
+          if (exchangeEvent) {
+            events.push(exchangeEvent);
+            return events;
+          }
+        }
+        // Social depth events (rare)
+        if (Math.random() < 0.02) {
+          const depthEvent = trySocialDepthEvent(
+            world,
+            agent,
+            nearbyAgent,
+            hour,
+          );
+          if (depthEvent) {
+            events.push(depthEvent);
+            return events;
+          }
+        }
+        // Regular social (much rarer)
+        if (Math.random() < 0.02 + ext * 0.03) {
+          const socialEvent = handleSocial(world, agent, nearbyAgent);
+          events.push(socialEvent);
           return events;
         }
-      }
-      // Resource exchange proposal (Step 21)
-      if (Math.random() < 0.03) {
-        const exchangeEvent = tryResourceExchange(
-          world,
-          agent,
-          nearbyAgent,
-          hour,
-        );
-        if (exchangeEvent) {
-          events.push(exchangeEvent);
-          return events;
-        }
-      }
-      // Social depth events (Step 16)
-      if (Math.random() < 0.05) {
-        const depthEvent = trySocialDepthEvent(world, agent, nearbyAgent, hour);
-        if (depthEvent) {
-          events.push(depthEvent);
-          return events;
-        }
-      }
-      // Regular social (extraversion boosts)
-      if (Math.random() < 0.05 + ext * 0.08) {
-        const socialEvent = handleSocial(world, agent, nearbyAgent);
-        events.push(socialEvent);
-        return events;
       }
     }
   }
@@ -718,16 +943,32 @@ function updateGoalAutonomous(
 
   // Skip if busy with action
   if (agent.actionTicks > 0) return;
-  // Skip if already pathfinding (unless idle)
+
+  // Hunger is URGENT — override everything except active actions
+  const isStarving = agent.hunger < HUNGER_THRESHOLD;
+  const isCurrentlyFeeding =
+    agent.currentGoal === "eating" ||
+    agent.currentGoal === "gathering" ||
+    agent.currentGoal === "buying_food" ||
+    agent.currentGoal === "quest_hunt";
+
+  // Skip if already pathfinding (unless idle OR starving and not feeding)
   if (
     agent.path.length > 0 &&
     agent.pathIndex < agent.path.length &&
     agent.currentGoal !== "idle"
-  )
-    return;
+  ) {
+    // Break out of non-survival tasks when starving
+    if (isStarving && !isCurrentlyFeeding) {
+      agent.path = [];
+      agent.pathIndex = 0;
+    } else {
+      return;
+    }
+  }
 
-  // Priority 1: Hunger — eat or hunt
-  if (agent.hunger < HUNGER_THRESHOLD) {
+  // Priority 1: Hunger — eat or hunt (overrides schedule)
+  if (isStarving) {
     if (agent.inventory.food > 0 || agent.inventory.meal > 0) {
       // Go home or tavern to eat
       agent.currentGoal = "eating";
@@ -843,9 +1084,28 @@ function updateGoalAutonomous(
     }
   }
 
-  // Priority 5: Gather resources (personality-weighted)
-  if (agent.currentGoal === "idle" && agent.hunger > 0.4) {
-    const gatherChance = 0.4 + bf.conscientiousness * 0.3;
+  // Priority 4.5: Accept monster quest from chief
+  if (agent.currentGoal === "idle" && world.monsterQuest) {
+    const quest = world.monsterQuest;
+    const isAssigned = quest.assignedAgents.includes(agent.id);
+    const hasComba = agent.skills.combat > 0.3 || agent.hp > 60;
+    if (isAssigned && hasComba) {
+      const monster = world.monsters.find(
+        (m) => m.id === quest.targetMonsterId && m.alive,
+      );
+      if (monster) {
+        agent.currentGoal = "quest_hunt";
+        agent.currentGoalKo = `📜 ${quest.targetNameKo} 토벌 중`;
+        agent.emoji = "⚔️";
+        navigateToPoint(world, agent, { x: monster.x, y: monster.y });
+        return;
+      }
+    }
+  }
+
+  // Priority 5: Gather resources (higher chance)
+  if (agent.currentGoal === "idle") {
+    const gatherChance = 0.5 + bf.conscientiousness * 0.3;
     if (Math.random() < gatherChance) {
       const targetType = pickGatherTarget(agent);
       if (targetType) {
@@ -877,8 +1137,8 @@ function updateGoalAutonomous(
     }
   }
 
-  // Priority 7: Socialize (high Extraversion)
-  if (agent.currentGoal === "idle" && Math.random() < bf.extraversion * 0.12) {
+  // Priority 7: Socialize (much rarer)
+  if (agent.currentGoal === "idle" && Math.random() < bf.extraversion * 0.04) {
     const socialSpots = ["tavern", "plaza", "market"];
     const spot = socialSpots[Math.floor(Math.random() * socialSpots.length)];
     agent.currentGoal = "socializing";
@@ -888,10 +1148,10 @@ function updateGoalAutonomous(
     return;
   }
 
-  // Priority 8: Think (low Extraversion or high Neuroticism)
+  // Priority 8: Think (rare)
   if (
     agent.currentGoal === "idle" &&
-    Math.random() < 0.05 + bf.neuroticism * 0.05
+    Math.random() < 0.02 + bf.neuroticism * 0.02
   ) {
     agent.currentGoal = "thinking";
     agent.currentGoalKo = "고민 중";
@@ -931,9 +1191,9 @@ function getJobSpecificAction(
   agent: WorldAgent,
   roles: string[],
 ): JobAction | null {
-  // Warrior: actively hunt monsters
+  // Warrior: actively hunt monsters (high chance)
   if (roles.includes("warrior") || roles.includes("guardian")) {
-    if (agent.hp > 50 && Math.random() < 0.25) {
+    if (agent.hp > 40 && Math.random() < 0.5) {
       const nearestMonster = world.monsters
         .filter((m) => m.alive)
         .sort(
@@ -1700,6 +1960,116 @@ function tryResourceExchange(
   );
 }
 
+// --- Chief Monster Quest System ---
+
+function tickChiefQuest(world: WorldState, events: WorldEvent[], hour: number) {
+  // Ensure chief is alive; if dead, elect new chief
+  const chief = world.agents.find((a) => a.id === world.chiefId && a.alive);
+  if (!chief) {
+    const newChief = world.agents.find((a) => a.alive);
+    if (newChief) {
+      world.chiefId = newChief.id;
+      events.push({
+        tick: world.currentTick,
+        hour,
+        agentId: newChief.id,
+        agentName: newChief.nameKo,
+        description: "New chief elected",
+        descriptionKo: `👑 ${newChief.nameKo}이(가) 새로운 촌장이 되었다!`,
+        type: "quest",
+      });
+    }
+    return;
+  }
+
+  // Check if current quest is completed (monster dead)
+  if (world.monsterQuest) {
+    const target = world.monsters.find(
+      (m) => m.id === world.monsterQuest!.targetMonsterId,
+    );
+    if (target && !target.alive) {
+      // Quest completed — reward assigned agents
+      for (const agentId of world.monsterQuest.assignedAgents) {
+        const agent = world.agents.find((a) => a.id === agentId && a.alive);
+        if (agent) {
+          agent.gold += world.monsterQuest.reward;
+          agent.currentGoal = "idle";
+          agent.currentGoalKo = "자유 시간";
+        }
+      }
+      events.push({
+        tick: world.currentTick,
+        hour,
+        agentId: chief.id,
+        agentName: chief.nameKo,
+        description: "Monster quest completed",
+        descriptionKo: `📜✅ ${world.monsterQuest.targetNameKo} 토벌 완료! 보상 ${world.monsterQuest.reward}G 지급!`,
+        type: "quest",
+      });
+      world.monsterQuest = undefined;
+    } else if (world.currentTick >= world.monsterQuest.deadline) {
+      // Quest expired
+      events.push({
+        tick: world.currentTick,
+        hour,
+        agentId: chief.id,
+        agentName: chief.nameKo,
+        description: "Monster quest expired",
+        descriptionKo: `📜❌ ${world.monsterQuest.targetNameKo} 토벌 실패... 새 의뢰 준비 중`,
+        type: "quest",
+      });
+      world.monsterQuest = undefined;
+    }
+  }
+
+  // Issue new quest if none active (every ~100 ticks, during daytime)
+  if (
+    !world.monsterQuest &&
+    hour >= 6 &&
+    hour < 20 &&
+    world.currentTick % 80 === 0 &&
+    world.currentTick > 0
+  ) {
+    const aliveMonsters = world.monsters.filter((m) => m.alive);
+    if (aliveMonsters.length === 0) return;
+
+    const target =
+      aliveMonsters[Math.floor(Math.random() * aliveMonsters.length)];
+    const reward = Math.floor(5 + target.strength * 15);
+
+    // Assign capable agents (alive, hp > 40, has combat skill)
+    const candidates = world.agents.filter(
+      (a) => a.alive && a.hp > 40 && a.skills.combat > 0.2 && !a.sleeping,
+    );
+    const assigned = candidates
+      .sort(() => Math.random() - 0.5)
+      .slice(0, Math.min(3, candidates.length))
+      .map((a) => a.id);
+
+    world.monsterQuest = {
+      targetMonsterId: target.id,
+      targetNameKo: target.nameKo,
+      reward,
+      assignedAgents: assigned,
+      deadline: world.currentTick + world.config.ticksPerDay,
+    };
+
+    const assignedNames = assigned
+      .map((id) => world.agents.find((a) => a.id === id)?.nameKo ?? "?")
+      .join(", ");
+
+    events.push({
+      tick: world.currentTick,
+      hour,
+      agentId: chief.id,
+      agentName: chief.nameKo,
+      description: `Chief issues monster quest: ${target.type}`,
+      descriptionKo: `👑📜 촌장 ${chief.nameKo}: "${target.nameKo} 토벌!" (보상 ${reward}G, 파견: ${assignedNames})`,
+      type: "quest",
+    });
+  }
+}
+
 // --- Village Project (Step 22) ---
 
 function tickVillageProject(
@@ -2087,13 +2457,15 @@ function handleCombat(
     agent.hp = Math.max(0, agent.hp - monsterDmg);
 
     if (agent.hp === 0) {
-      // Knocked out
-      agent.stunTicks = 50;
-      agent.currentGoal = "stunned";
-      agent.currentGoalKo = "기절";
-      agent.emoji = "💫";
+      // Death in combat
+      agent.alive = false;
+      agent.deathTick = world.currentTick;
+      agent.currentGoal = "dead";
+      agent.currentGoalKo = "사망";
+      agent.emoji = "💀";
       agent.path = [];
-      descKo = `${agent.nameKo}이(가) ${monster.nameKo}에게 쓰러졌다! (기절 50틱)`;
+      world.deathCount++;
+      descKo = `💀 ${agent.nameKo}이(가) ${monster.nameKo}에게 쓰러져 사망했다!`;
     } else if (monster.hp <= 0) {
       monster.alive = false;
       monster.respawnTick = world.currentTick + MONSTER_RESPAWN_TICKS;

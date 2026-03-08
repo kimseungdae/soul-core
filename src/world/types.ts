@@ -158,6 +158,8 @@ export interface WorldAgent {
   nameKo: string;
   color: string;
   sleeping: boolean;
+  alive: boolean;
+  deathTick: number; // tick when died (-1 = alive)
   // Deep behavior system
   inventory: Record<ItemType, number>;
   gold: number;
@@ -234,6 +236,15 @@ export interface WorldState {
     contributors: string[];
     deadline: number; // tick
   };
+  chiefId: string; // agent id of the village chief
+  monsterQuest?: {
+    targetMonsterId: string;
+    targetNameKo: string;
+    reward: number; // gold
+    assignedAgents: string[];
+    deadline: number; // tick
+  };
+  deathCount: number; // total NPCs that have died
 }
 
 export interface WorldEvent {
@@ -255,7 +266,9 @@ export interface WorldEvent {
     | "trade"
     | "eat"
     | "cooperate"
-    | "think";
+    | "think"
+    | "quest"
+    | "death";
 }
 
 // --- Helpers ---

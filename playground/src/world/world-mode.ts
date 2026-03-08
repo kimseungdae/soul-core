@@ -57,6 +57,8 @@ const worldNeeds = $("#world-needs");
 const worldRelationships = $("#world-relationships");
 const eventLog = $("#world-event-log");
 const infoBar = $("#world-info-bar");
+const deathCountEl = $("#world-death-count");
+const questInfoEl = $("#world-quest-info");
 
 // --- Korean Labels ---
 
@@ -320,6 +322,19 @@ function updateTimeDisplay() {
   dayEl.textContent = `${day}일차`;
   timeEl.textContent = hourToTimeString(hour);
   periodEl.textContent = getTimeOfDayLabelKo(hour);
+  deathCountEl.textContent = `💀 ${world.deathCount}`;
+
+  // Quest info
+  if (world.monsterQuest) {
+    const q = world.monsterQuest;
+    const names = q.assignedAgents
+      .map((id) => world.agents.find((a) => a.id === id)?.nameKo ?? "?")
+      .join(", ");
+    questInfoEl.style.display = "block";
+    questInfoEl.textContent = `📜 토벌: ${q.targetNameKo} (보상 ${q.reward}G) — ${names}`;
+  } else {
+    questInfoEl.style.display = "none";
+  }
 }
 
 function buildNpcList() {
@@ -332,15 +347,24 @@ function buildNpcList() {
     card.dataset.agentId = agent.id;
     const hPct = Math.floor(agent.hunger * 100);
     const hCol = hPct > 50 ? "#4CAF50" : hPct > 25 ? "#FF9800" : "#f44336";
-    card.innerHTML = `
-      <div class="npc-dot" style="background: ${agent.color}"></div>
-      <span class="npc-emoji">${agent.emoji}</span>
-      <span class="npc-name">${agent.nameKo}</span>
-      <span class="npc-hunger" style="color:${hCol}">${hPct}%</span>
-      <span class="npc-hp" style="color:${agent.hp < 30 ? "#f44336" : agent.hp < 60 ? "#FF9800" : "#4CAF50"}">❤️${Math.floor(agent.hp)}</span>
-      <span class="npc-gold">💰${agent.gold}</span>
-      <span class="npc-activity">${agent.currentGoalKo}</span>
-    `;
+    if (!agent.alive) {
+      card.innerHTML = `
+        <div class="npc-dot" style="background: #555"></div>
+        <span class="npc-emoji">💀</span>
+        <span class="npc-name" style="text-decoration:line-through;opacity:0.5">${agent.nameKo}</span>
+        <span class="npc-activity" style="color:#f44336">사망</span>
+      `;
+    } else {
+      card.innerHTML = `
+        <div class="npc-dot" style="background: ${agent.color}"></div>
+        <span class="npc-emoji">${agent.emoji}</span>
+        <span class="npc-name">${agent.nameKo}</span>
+        <span class="npc-hunger" style="color:${hCol}">${hPct}%</span>
+        <span class="npc-hp" style="color:${agent.hp < 30 ? "#f44336" : agent.hp < 60 ? "#FF9800" : "#4CAF50"}">❤️${Math.floor(agent.hp)}</span>
+        <span class="npc-gold">💰${agent.gold}</span>
+        <span class="npc-activity">${agent.currentGoalKo}</span>
+      `;
+    }
     card.addEventListener("click", () => selectAgent(agent.id));
     npcList.appendChild(card);
   }
@@ -348,10 +372,25 @@ function buildNpcList() {
 
 function updateNpcList() {
   const cards = npcList.querySelectorAll<HTMLDivElement>(".npc-card");
+  // Check if agent IDs changed (death/respawn) → rebuild
+  const cardIds = Array.from(cards).map((c) => c.dataset.agentId);
+  const agentIds = world.agents.map((a) => a.id);
+  if (
+    cardIds.length !== agentIds.length ||
+    cardIds.some((id, i) => id !== agentIds[i])
+  ) {
+    buildNpcList();
+    return;
+  }
   cards.forEach((card) => {
     const id = card.dataset.agentId;
     const agent = world.agents.find((a) => a.id === id);
     if (!agent) return;
+    if (!agent.alive) {
+      card.querySelector(".npc-emoji")!.textContent = "💀";
+      card.querySelector(".npc-activity")!.textContent = "사망";
+      return;
+    }
     card.querySelector(".npc-emoji")!.textContent = agent.emoji;
     card.querySelector(".npc-activity")!.textContent = agent.currentGoalKo;
     const hPct = Math.floor(agent.hunger * 100);
@@ -397,6 +436,24 @@ function renderNpcDetail() {
   }
 
   selectedNameEl.textContent = agent.nameKo;
+
+  // Dead NPC detail
+  if (!agent.alive) {
+    npcDetail.innerHTML = `
+      <div class="npc-detail-header">
+        <span class="npc-detail-emoji">💀</span>
+        <div>
+          <div class="npc-detail-name" style="text-decoration:line-through">${agent.nameKo} (${agent.seed.name})</div>
+          <div class="npc-detail-role" style="color:#f44336">사망</div>
+        </div>
+      </div>
+      <div style="color:#888;padding:8px">빛의 신전에서 새로운 영혼이 태어나길 기다리는 중...</div>
+    `;
+    worldEmotions.innerHTML = "";
+    worldNeeds.innerHTML = "";
+    worldRelationships.innerHTML = "";
+    return;
+  }
 
   const invItems =
     Object.entries(agent.inventory)
