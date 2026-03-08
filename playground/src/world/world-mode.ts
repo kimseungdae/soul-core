@@ -337,6 +337,7 @@ function buildNpcList() {
       <span class="npc-emoji">${agent.emoji}</span>
       <span class="npc-name">${agent.nameKo}</span>
       <span class="npc-hunger" style="color:${hCol}">${hPct}%</span>
+      <span class="npc-hp" style="color:${agent.hp < 30 ? "#f44336" : agent.hp < 60 ? "#FF9800" : "#4CAF50"}">❤️${Math.floor(agent.hp)}</span>
       <span class="npc-gold">💰${agent.gold}</span>
       <span class="npc-activity">${agent.currentGoalKo}</span>
     `;
@@ -362,6 +363,12 @@ function updateNpcList() {
     }
     const goldEl = card.querySelector<HTMLElement>(".npc-gold");
     if (goldEl) goldEl.textContent = `💰${agent.gold}`;
+    const hpEl = card.querySelector<HTMLElement>(".npc-hp");
+    if (hpEl) {
+      hpEl.textContent = `❤️${Math.floor(agent.hp)}`;
+      hpEl.style.color =
+        agent.hp < 30 ? "#f44336" : agent.hp < 60 ? "#FF9800" : "#4CAF50";
+    }
     card.classList.toggle("selected", world.selectedAgentId === agent.id);
   });
 }
@@ -431,10 +438,33 @@ function renderNpcDetail() {
         <span style="color:${hungerColor}">🍖 포만감: ${hungerPct}%</span>
       </div>
       <div class="stat-row">
+        <span style="color:${agent.hp < 30 ? "#f44336" : agent.hp < 60 ? "#FF9800" : "#4CAF50"}">❤️ HP: ${Math.floor(agent.hp)}/100</span>
+        <span style="color:${agent.fatigue > 0.7 ? "#f44336" : agent.fatigue > 0.4 ? "#FF9800" : "#4CAF50"}">💧 피로: ${Math.floor(agent.fatigue * 100)}%</span>
+      </div>
+      <div class="stat-row">
+        <div style="display:flex;gap:4px;align-items:center;width:100%">
+          <span style="font-size:10px;min-width:50px">❤️ HP</span>
+          <div style="flex:1;height:6px;background:#333;border-radius:3px;overflow:hidden">
+            <div style="width:${agent.hp}%;height:100%;background:${agent.hp < 30 ? "#f44336" : agent.hp < 60 ? "#FF9800" : "#4CAF50"}"></div>
+          </div>
+        </div>
+      </div>
+      <div class="stat-row">
+        <div style="display:flex;gap:4px;align-items:center;width:100%">
+          <span style="font-size:10px;min-width:50px">💧 피로</span>
+          <div style="flex:1;height:6px;background:#333;border-radius:3px;overflow:hidden">
+            <div style="width:${agent.fatigue * 100}%;height:100%;background:${agent.fatigue > 0.7 ? "#f44336" : agent.fatigue > 0.4 ? "#FF9800" : "#4CAF50"}"></div>
+          </div>
+        </div>
+      </div>
+      <div class="stat-row">
         <span>⚔️ 전투: ${(agent.skills.combat * 100).toFixed(0)}%</span>
         <span>🔨 제작: ${(agent.skills.crafting * 100).toFixed(0)}%</span>
         <span>⛏️ 채집: ${(agent.skills.gathering * 100).toFixed(0)}%</span>
       </div>
+      ${agent.inventory.tool > 0 ? `<div class="stat-row"><span>🔧 도구 내구도: ${10 - agent.toolUses}/10</span></div>` : ""}
+      ${agent.inventory.weapon > 0 ? `<div class="stat-row"><span>🗡️ 무기 내구도: ${20 - agent.weaponUses}/20</span></div>` : ""}
+      ${Object.keys(agent.debts).length > 0 ? `<div class="stat-row"><span style="color:#f44336">💸 빚: ${Object.values(agent.debts).reduce((s, v) => s + v, 0)}G</span></div>` : ""}
       <div class="stat-row inv-row">
         <span class="inv-label">인벤토리:</span> ${invItems}
       </div>

@@ -504,12 +504,45 @@ function drawAgents(
     ctx.fillText(agent.nameKo, sx, sy + r + 2);
     ctx.restore();
 
+    // Status effect icons (Step 23)
+    const statusIcons: string[] = [];
+    if (agent.hp < 30) statusIcons.push("❤️");
+    if (agent.fatigue > 0.7) statusIcons.push("💧");
+    if (agent.stunTicks > 0) statusIcons.push("💫");
+    if (agent.huntPartyWith) statusIcons.push("👥");
+    if (statusIcons.length > 0 && !agent.sleeping) {
+      ctx.save();
+      ctx.font = `${Math.max(8, 10 * camera.zoom)}px sans-serif`;
+      ctx.textAlign = "left";
+      ctx.textBaseline = "middle";
+      const iconY = sy - r - 22 * camera.zoom;
+      statusIcons.forEach((icon, i) => {
+        ctx.fillText(icon, sx + r + i * 10 * camera.zoom, iconY);
+      });
+      ctx.restore();
+    }
+
+    // HP bar (when < 100 and not sleeping)
+    if (agent.hp < 100 && !agent.sleeping) {
+      const barW = ts * 0.9;
+      const barH = 2.5 * camera.zoom;
+      const bx = sx - barW / 2;
+      const by = sy + r + 14 * camera.zoom;
+      ctx.fillStyle = "rgba(0,0,0,0.4)";
+      ctx.fillRect(bx, by, barW, barH);
+      const hpRatio = agent.hp / 100;
+      ctx.fillStyle =
+        hpRatio > 0.5 ? "#4CAF50" : hpRatio > 0.25 ? "#FF9800" : "#f44336";
+      ctx.fillRect(bx, by, barW * hpRatio, barH);
+    }
+
     // Hunger bar (only when low)
     if (agent.hunger < 0.5 && !agent.sleeping) {
       const barW = ts * 0.9;
       const barH = 2.5 * camera.zoom;
       const bx = sx - barW / 2;
-      const by = sy + r + 14 * camera.zoom;
+      const hpOffset = agent.hp < 100 ? 5 * camera.zoom : 0;
+      const by = sy + r + 14 * camera.zoom + hpOffset;
       ctx.fillStyle = "rgba(0,0,0,0.4)";
       ctx.fillRect(bx, by, barW, barH);
       const hRatio = agent.hunger;
@@ -517,18 +550,33 @@ function drawAgents(
       ctx.fillRect(bx, by, barW * hRatio, barH);
     }
 
-    // Action progress bar (gathering/crafting)
-    if (agent.actionTicks > 0) {
+    // Action progress bar with real progress (Step 24)
+    if (agent.actionTicks > 0 && agent.maxActionTicks > 0) {
       const barW = ts * 0.9;
-      const barH = 2.5 * camera.zoom;
+      const barH = 3 * camera.zoom;
       const bx = sx - barW / 2;
       const by = sy - r - 20 * camera.zoom;
       ctx.fillStyle = "rgba(0,0,0,0.5)";
       ctx.fillRect(bx, by, barW, barH);
-      // We don't know max ticks here, show pulsing bar
-      const pulse = 0.5 + 0.5 * Math.sin(gt * 0.15);
-      ctx.fillStyle = `rgba(100,200,255,${0.5 + pulse * 0.3})`;
-      ctx.fillRect(bx, by, barW * pulse, barH);
+      const progress = 1 - agent.actionTicks / agent.maxActionTicks;
+      // Color based on action type
+      const isGathering = agent.currentGoal === "gathering";
+      const isCrafting = agent.currentGoal === "crafting";
+      const barColor = isGathering
+        ? "#4CAF50"
+        : isCrafting
+          ? "#FF9800"
+          : "#f44336";
+      ctx.fillStyle = barColor;
+      ctx.fillRect(bx, by, barW * progress, barH);
+      // Progress text
+      ctx.save();
+      ctx.font = `${Math.max(7, 8 * camera.zoom)}px sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "bottom";
+      ctx.fillStyle = "#fff";
+      ctx.fillText(`${Math.floor(progress * 100)}%`, sx, by - 1);
+      ctx.restore();
     }
   }
 }

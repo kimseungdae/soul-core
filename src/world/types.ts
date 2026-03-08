@@ -162,10 +162,26 @@ export interface WorldAgent {
   inventory: Record<ItemType, number>;
   gold: number;
   hunger: number; // 0~1 (0=starving, 1=full)
+  hp: number; // 0~100
   skills: { combat: number; crafting: number; gathering: number };
   moveCooldown: number; // ticks until next move
   actionTicks: number; // remaining ticks for current action (gathering/crafting)
+  maxActionTicks: number; // total ticks for progress bar calculation
   actionTarget?: string; // resource node id or recipe id
+  toolUses: number; // durability tracker, tool breaks at 10
+  weaponUses: number; // durability tracker, weapon breaks at 20
+  stunTicks: number; // ticks remaining when knocked out (hp=0)
+  fatigue: number; // 0~1 (0=rested, 1=exhausted)
+  previousGoal: string; // for goal chaining
+  debts: Record<string, number>; // agentId → gold owed
+  huntPartyWith?: string; // agentId of hunt partner
+  pendingTrade?: {
+    partnerId: string;
+    give: ResourceType;
+    giveAmt: number;
+    receive: ResourceType;
+    receiveAmt: number;
+  };
 }
 
 // --- Monster System ---
@@ -208,6 +224,16 @@ export interface WorldState {
   eventLog: WorldEvent[];
   paused: boolean;
   selectedAgentId: EntityId | null;
+  marketPrices: Record<ItemType, number>;
+  villageProject?: {
+    name: string;
+    nameKo: string;
+    requiredItem: ItemType;
+    requiredAmount: number;
+    contributed: number;
+    contributors: string[];
+    deadline: number; // tick
+  };
 }
 
 export interface WorldEvent {
