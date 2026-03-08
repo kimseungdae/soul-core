@@ -13,8 +13,8 @@ import { tickToHour } from "soul-core";
 export const TILE_SIZE = 16;
 const MAP_SIZE = 64;
 const AGENT_RADIUS = 6;
-const MINIMAP_SIZE = 64;
-const MINIMAP_PADDING = 8;
+const MINIMAP_SIZE = 72;
+const MINIMAP_PADDING = 10;
 
 export interface Camera {
   x: number;
@@ -54,6 +54,7 @@ export interface VisualState {
   lerpProgress: number;
   bubbles: Bubble[];
   interactions: InteractionLine[];
+  globalTick: number;
 }
 
 export function createVisualState(): VisualState {
@@ -62,6 +63,7 @@ export function createVisualState(): VisualState {
     lerpProgress: 1,
     bubbles: [],
     interactions: [],
+    globalTick: 0,
   };
 }
 
@@ -73,7 +75,7 @@ export function addBubble(
   emoji: string,
   color: string,
 ) {
-  vs.bubbles.push({ x, y, text, emoji, color, life: 0, maxLife: 120 });
+  vs.bubbles.push({ x, y, text, emoji, color, life: 0, maxLife: 150 });
 }
 
 export function addInteraction(
@@ -82,7 +84,7 @@ export function addInteraction(
   toId: string,
   color: string,
 ) {
-  vs.interactions.push({ fromId, toId, color, life: 0, maxLife: 90 });
+  vs.interactions.push({ fromId, toId, color, life: 0, maxLife: 120 });
 }
 
 export function snapshotPositions(vs: VisualState, agents: WorldAgent[]) {
@@ -99,10 +101,9 @@ export function snapshotPositions(vs: VisualState, agents: WorldAgent[]) {
 }
 
 export function tickVisuals(vs: VisualState, dt: number) {
-  // Advance lerp
+  vs.globalTick++;
   vs.lerpProgress = Math.min(1, vs.lerpProgress + dt * 3);
 
-  // Advance bubbles
   for (let i = vs.bubbles.length - 1; i >= 0; i--) {
     vs.bubbles[i].life += 1;
     if (vs.bubbles[i].life >= vs.bubbles[i].maxLife) {
@@ -110,7 +111,6 @@ export function tickVisuals(vs: VisualState, dt: number) {
     }
   }
 
-  // Advance interactions
   for (let i = vs.interactions.length - 1; i >= 0; i--) {
     vs.interactions[i].life += 1;
     if (vs.interactions[i].life >= vs.interactions[i].maxLife) {
@@ -137,6 +137,27 @@ const TILE_COLORS: Record<TileType, string> = {
   fence: "#6b5b3f",
   plaza: "#8a8a7a",
   market_stall: "#9b7b3f",
+};
+
+// Tile variation range per type
+const TILE_VARY: Partial<Record<TileType, number>> = {
+  grass: 14,
+  forest: 12,
+  path: 6,
+  floor: 5,
+  plaza: 5,
+  mountain: 8,
+  dungeon_floor: 6,
+  water: 6,
+  market_stall: 4,
+};
+
+// Tiles that should have subtle border
+const TILE_BORDER: Partial<Record<TileType, string>> = {
+  wall: "rgba(40,40,50,0.6)",
+  fence: "rgba(60,50,30,0.5)",
+  dungeon_wall: "rgba(20,10,20,0.6)",
+  bridge: "rgba(80,70,50,0.4)",
 };
 
 const MONSTER_EMOJI: Record<MonsterType, string> = {
@@ -170,7 +191,6 @@ function varyColor(base: string, x: number, y: number, range: number): string {
 }
 
 function lerp(a: number, b: number, t: number): number {
-  // Ease-out cubic
   const tt = 1 - Math.pow(1 - t, 3);
   return a + (b - a) * tt;
 }
@@ -197,6 +217,13 @@ function getAgentScreenPos(
   };
 }
 
+function lightenColor(hex: string, amount: number): string {
+  const r = Math.min(255, parseInt(hex.slice(1, 3), 16) + amount);
+  const g = Math.min(255, parseInt(hex.slice(3, 5), 16) + amount);
+  const b = Math.min(255, parseInt(hex.slice(5, 7), 16) + amount);
+  return `rgb(${r},${g},${b})`;
+}
+
 // --- Draw Functions ---
 
 function drawTiles(
@@ -205,6 +232,7 @@ function drawTiles(
   camera: Camera,
   canvasW: number,
   canvasH: number,
+  tick: number,
 ) {
   const ts = TILE_SIZE * camera.zoom;
   const offsetX = canvasW / 2 - camera.x * ts;
@@ -221,14 +249,31 @@ function drawTiles(
       if (!tile) continue;
       const type = tile.type;
       const base = TILE_COLORS[type] ?? "#000000";
-      const needsVar = type === "grass" || type === "forest";
-      ctx.fillStyle = needsVar ? varyColor(base, col, row, 12) : base;
-      ctx.fillRect(
-        Math.floor(offsetX + col * ts),
-        Math.floor(offsetY + row * ts),
-        Math.ceil(ts) + 1,
-        Math.ceil(ts) + 1,
-      );
+      const vRange = TILE_VARY[type];
+
+      // Water shimmer
+      if (type === "water") {
+        const wave = Math.sin(tick * 0.03 + col * 0.8 + row * 0.5) * 8;
+        ctx.fillStyle = varyColor(base, col, row + Math.floor(wave), 10);
+      } else if (vRange) {
+        ctx.fillStyle = varyColor(base, col, row, vRange);
+      } else {
+        ctx.fillStyle = base;
+      }
+
+      const px = Math.floor(offsetX + col * ts);
+      const py = Math.floor(offsetY + row * ts);
+      const pw = Math.ceil(ts) + 1;
+      const ph = Math.ceil(ts) + 1;
+      ctx.fillRect(px, py, pw, ph);
+
+      // Subtle border for structural tiles
+      const borderColor = TILE_BORDER[type];
+      if (borderColor) {
+        ctx.strokeStyle = borderColor;
+        ctx.lineWidth = 0.5;
+        ctx.strokeRect(px + 0.5, py + 0.5, pw - 1, ph - 1);
+      }
     }
   }
 }
@@ -245,7 +290,7 @@ function drawLocationLabels(
   const offsetY = canvasH / 2 - camera.y * ts;
 
   ctx.save();
-  ctx.font = `${Math.max(9, 11 * camera.zoom)}px sans-serif`;
+  ctx.font = `bold ${Math.max(9, 11 * camera.zoom)}px sans-serif`;
   ctx.textAlign = "center";
   ctx.textBaseline = "bottom";
 
@@ -255,14 +300,17 @@ function drawLocationLabels(
     if (cx < -100 || cx > canvasW + 100 || cy < -40 || cy > canvasH + 40)
       continue;
 
-    ctx.fillStyle = "rgba(0,0,0,0.6)";
     const textW = ctx.measureText(loc.nameKo).width;
-    ctx.fillRect(
-      cx - textW / 2 - 3,
-      cy - 12 * camera.zoom,
-      textW + 6,
-      14 * camera.zoom,
-    );
+    const boxH = 14 * camera.zoom;
+
+    // Background with border
+    ctx.fillStyle = "rgba(0,0,0,0.65)";
+    ctx.fillRect(cx - textW / 2 - 4, cy - boxH, textW + 8, boxH);
+    ctx.strokeStyle = "rgba(255,255,255,0.15)";
+    ctx.lineWidth = 0.5;
+    ctx.strokeRect(cx - textW / 2 - 4, cy - boxH, textW + 8, boxH);
+
+    // Text with shadow
     ctx.fillStyle = "#ffffff";
     ctx.fillText(loc.nameKo, cx, cy);
   }
@@ -292,14 +340,28 @@ function drawInteractions(
     const alpha = 1 - line.life / line.maxLife;
     ctx.save();
     ctx.strokeStyle = line.color;
-    ctx.globalAlpha = alpha * 0.6;
-    ctx.lineWidth = 2 * camera.zoom;
-    ctx.setLineDash([4 * camera.zoom, 4 * camera.zoom]);
+    ctx.globalAlpha = alpha * 0.7;
+    ctx.lineWidth = 2.5 * camera.zoom;
+    ctx.setLineDash([6 * camera.zoom, 4 * camera.zoom]);
+    // Animate dash offset for flowing effect
+    ctx.lineDashOffset = -(vs.globalTick * 0.8);
     ctx.beginPath();
     ctx.moveTo(p1.sx, p1.sy);
     ctx.lineTo(p2.sx, p2.sy);
     ctx.stroke();
     ctx.setLineDash([]);
+
+    // Pulse dots at endpoints
+    const pulseR = (3 + Math.sin(vs.globalTick * 0.15) * 1.5) * camera.zoom;
+    ctx.fillStyle = line.color;
+    ctx.globalAlpha = alpha * 0.5;
+    ctx.beginPath();
+    ctx.arc(p1.sx, p1.sy, pulseR, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(p2.sx, p2.sy, pulseR, 0, Math.PI * 2);
+    ctx.fill();
+
     ctx.restore();
   }
 }
@@ -318,6 +380,7 @@ function drawAgents(
   const offsetX = canvasW / 2 - camera.x * ts;
   const offsetY = canvasH / 2 - camera.y * ts;
   const r = AGENT_RADIUS * camera.zoom;
+  const gt = vs.globalTick;
 
   for (const agent of agents) {
     const { sx, sy } = getAgentScreenPos(agent, vs, ts, offsetX, offsetY);
@@ -331,21 +394,28 @@ function drawAgents(
       continue;
 
     // Shadow
-    ctx.fillStyle = "rgba(0,0,0,0.25)";
+    ctx.fillStyle = "rgba(0,0,0,0.3)";
     ctx.beginPath();
-    ctx.ellipse(sx, sy + r * 0.8, r * 0.8, r * 0.3, 0, 0, Math.PI * 2);
+    ctx.ellipse(sx, sy + r * 0.8, r * 0.9, r * 0.35, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    // Selection highlight (pulsing ring)
+    // Selection highlight (double pulsing ring)
     if (agent.id === selectedId) {
-      const pulse = 1 + 0.25 * Math.sin(tick * 0.12);
+      const pulse = 1 + 0.2 * Math.sin(gt * 0.1);
       ctx.save();
       ctx.strokeStyle = "#ffdd44";
-      ctx.lineWidth = 2.5 * camera.zoom;
+      ctx.lineWidth = 3 * camera.zoom;
       ctx.shadowColor = "#ffdd44";
-      ctx.shadowBlur = 8;
+      ctx.shadowBlur = 12;
       ctx.beginPath();
       ctx.arc(sx, sy, r * 1.8 * pulse, 0, Math.PI * 2);
+      ctx.stroke();
+      // Inner ring
+      ctx.shadowBlur = 0;
+      ctx.globalAlpha = 0.4;
+      ctx.lineWidth = 1.5 * camera.zoom;
+      ctx.beginPath();
+      ctx.arc(sx, sy, r * 1.4 * pulse, 0, Math.PI * 2);
       ctx.stroke();
       ctx.restore();
     }
@@ -359,8 +429,9 @@ function drawAgents(
       sy,
       r,
     );
-    grad.addColorStop(0, lightenColor(agent.color, 40));
-    grad.addColorStop(1, agent.color);
+    grad.addColorStop(0, lightenColor(agent.color, 50));
+    grad.addColorStop(0.7, agent.color);
+    grad.addColorStop(1, lightenColor(agent.color, -20));
     ctx.fillStyle = grad;
     ctx.beginPath();
     ctx.arc(sx, sy, r, 0, Math.PI * 2);
@@ -371,19 +442,47 @@ function drawAgents(
     ctx.lineWidth = 1;
     ctx.stroke();
 
-    // Sleeping indicator
+    // Sleeping indicator (floating Z with fade)
     if (agent.sleeping) {
       ctx.save();
-      ctx.font = `${Math.max(12, 16 * camera.zoom)}px sans-serif`;
+      const zPhase = gt * 0.06;
+      const z1Alpha = 0.4 + 0.6 * Math.abs(Math.sin(zPhase));
+      const z2Alpha = 0.4 + 0.6 * Math.abs(Math.sin(zPhase + 1));
+      const z3Alpha = 0.4 + 0.6 * Math.abs(Math.sin(zPhase + 2));
+      const floatBase = sy - r * 1.5;
+
       ctx.textAlign = "center";
       ctx.textBaseline = "bottom";
-      const zzz = tick % 3 === 0 ? "💤" : tick % 3 === 1 ? "z" : "Z";
       ctx.fillStyle = "#aaaaff";
-      ctx.fillText(zzz, sx + r, sy - r * 1.5);
+
+      // Three Z's floating at different heights
+      ctx.font = `${Math.max(8, 10 * camera.zoom)}px sans-serif`;
+      ctx.globalAlpha = z1Alpha;
+      ctx.fillText(
+        "z",
+        sx + r * 0.5,
+        floatBase + Math.sin(gt * 0.04) * 3 * camera.zoom,
+      );
+      ctx.font = `${Math.max(10, 13 * camera.zoom)}px sans-serif`;
+      ctx.globalAlpha = z2Alpha;
+      ctx.fillText(
+        "Z",
+        sx + r * 1.0,
+        floatBase - 6 * camera.zoom + Math.sin(gt * 0.04 + 1) * 3 * camera.zoom,
+      );
+      ctx.font = `bold ${Math.max(12, 16 * camera.zoom)}px sans-serif`;
+      ctx.globalAlpha = z3Alpha;
+      ctx.fillText(
+        "Z",
+        sx + r * 1.5,
+        floatBase -
+          14 * camera.zoom +
+          Math.sin(gt * 0.04 + 2) * 3 * camera.zoom,
+      );
       ctx.restore();
     } else {
       // Emoji above (with bounce)
-      const bounce = Math.sin(tick * 0.08 + agent.x * 0.5) * 2 * camera.zoom;
+      const bounce = Math.sin(gt * 0.06 + agent.x * 0.5) * 2.5 * camera.zoom;
       ctx.save();
       ctx.font = `${Math.max(12, 16 * camera.zoom)}px sans-serif`;
       ctx.textAlign = "center";
@@ -397,7 +496,7 @@ function drawAgents(
     ctx.font = `bold ${Math.max(8, 10 * camera.zoom)}px sans-serif`;
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
-    ctx.strokeStyle = "rgba(0,0,0,0.8)";
+    ctx.strokeStyle = "rgba(0,0,0,0.85)";
     ctx.lineWidth = 3;
     ctx.strokeText(agent.nameKo, sx, sy + r + 2);
     ctx.fillStyle = "#ffffff";
@@ -413,6 +512,7 @@ function drawMonsters(
   canvasW: number,
   canvasH: number,
   tick: number,
+  gt: number,
 ) {
   const ts = TILE_SIZE * camera.zoom;
   const offsetX = canvasW / 2 - camera.x * ts;
@@ -429,10 +529,10 @@ function drawMonsters(
     const r = AGENT_RADIUS * camera.zoom * 0.85;
 
     // Threat aura (pulsing)
-    const aura = 0.3 + 0.15 * Math.sin(tick * 0.1 + m.x);
+    const aura = 0.25 + 0.15 * Math.sin(gt * 0.08 + m.x);
     ctx.fillStyle = `rgba(180,30,30,${aura})`;
     ctx.beginPath();
-    ctx.arc(sx, sy, r * 1.5, 0, Math.PI * 2);
+    ctx.arc(sx, sy, r * 1.6, 0, Math.PI * 2);
     ctx.fill();
 
     // Body
@@ -444,25 +544,30 @@ function drawMonsters(
     ctx.lineWidth = 1;
     ctx.stroke();
 
-    // Emoji
+    // Emoji with bounce
     const emoji = MONSTER_EMOJI[m.type] ?? "👾";
+    const bounce = Math.sin(gt * 0.07 + m.y * 0.5) * 1.5 * camera.zoom;
     ctx.save();
     ctx.font = `${Math.max(10, 14 * camera.zoom)}px sans-serif`;
     ctx.textAlign = "center";
     ctx.textBaseline = "bottom";
-    ctx.fillText(emoji, sx, sy - r - 1);
+    ctx.fillText(emoji, sx, sy - r - 1 + bounce);
     ctx.restore();
 
-    // HP bar
+    // HP bar (gradient)
     if (m.hp < m.maxHp) {
       const barW = ts * 1;
       const barH = 3 * camera.zoom;
       const bx = sx - barW / 2;
       const by = sy + r + 3;
-      ctx.fillStyle = "#333";
+      ctx.fillStyle = "#222";
       ctx.fillRect(bx, by, barW, barH);
-      ctx.fillStyle = "#e33";
-      ctx.fillRect(bx, by, barW * (m.hp / m.maxHp), barH);
+      const hpRatio = m.hp / m.maxHp;
+      const hpGrad = ctx.createLinearGradient(bx, by, bx + barW * hpRatio, by);
+      hpGrad.addColorStop(0, "#ff4444");
+      hpGrad.addColorStop(1, "#ff8844");
+      ctx.fillStyle = hpGrad;
+      ctx.fillRect(bx, by, barW * hpRatio, barH);
     }
   }
 }
@@ -480,37 +585,56 @@ function drawBubbles(
 
   for (const b of vs.bubbles) {
     const progress = b.life / b.maxLife;
+
+    // Alpha: fade in (0-10%), full (10-70%), fade out (70-100%)
     const alpha =
       progress < 0.1
         ? progress / 0.1
         : progress > 0.7
           ? (1 - progress) / 0.3
           : 1;
-    const floatY = -progress * 40 * camera.zoom;
+
+    // Scale: bounce in, shrink out
+    let scale = 1;
+    if (progress < 0.08) {
+      const t = progress / 0.08;
+      scale = 0.5 + 0.6 * t - 0.1 * Math.sin(t * Math.PI);
+    } else if (progress > 0.8) {
+      scale = 1 - ((progress - 0.8) / 0.2) * 0.3;
+    }
+
+    const floatY = -progress * 45 * camera.zoom;
 
     const bx = offsetX + (b.x + 0.5) * ts;
-    const by = offsetY + (b.y + 0.5) * ts + floatY - 20 * camera.zoom;
+    const by = offsetY + (b.y + 0.5) * ts + floatY - 22 * camera.zoom;
 
-    if (bx < -100 || bx > canvasW + 100 || by < -100 || by > canvasH + 100)
+    if (bx < -200 || bx > canvasW + 200 || by < -100 || by > canvasH + 100)
       continue;
 
     ctx.save();
     ctx.globalAlpha = alpha;
+    ctx.translate(bx, by);
+    ctx.scale(scale, scale);
 
     // Bubble background
     const fontSize = Math.max(10, 11 * camera.zoom);
     ctx.font = `${fontSize}px sans-serif`;
     const label = `${b.emoji} ${b.text}`;
     const tw = ctx.measureText(label).width;
-    const padding = 6;
+    const padding = 8;
     const bw = tw + padding * 2;
     const bh = fontSize + padding * 2;
 
-    // Rounded rect
-    const rx = bx - bw / 2;
-    const ry = by - bh / 2;
-    const radius = 6;
-    ctx.fillStyle = "rgba(0,0,0,0.75)";
+    // Rounded rect with gradient background
+    const rx = -bw / 2;
+    const ry = -bh / 2;
+    const radius = 8;
+
+    const bgGrad = ctx.createLinearGradient(rx, ry, rx, ry + bh);
+    bgGrad.addColorStop(0, "rgba(20,20,30,0.85)");
+    bgGrad.addColorStop(1, "rgba(10,10,20,0.9)");
+    ctx.fillStyle = bgGrad;
+
     ctx.beginPath();
     ctx.moveTo(rx + radius, ry);
     ctx.lineTo(rx + bw - radius, ry);
@@ -533,7 +657,7 @@ function drawBubbles(
     ctx.fillStyle = "#ffffff";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText(label, bx, by);
+    ctx.fillText(label, 0, 0);
 
     ctx.restore();
   }
@@ -544,15 +668,57 @@ function drawNightOverlay(
   hour: number,
   canvasW: number,
   canvasH: number,
+  gt: number,
 ) {
-  let alpha = 0;
-  if (hour < 5) alpha = 0.45;
-  else if (hour < 7) alpha = 0.45 * (1 - (hour - 5) / 2);
-  else if (hour > 21) alpha = 0.45 * ((hour - 21) / 3);
+  let nightAlpha = 0;
+  let warmAlpha = 0;
 
-  if (alpha > 0.01) {
-    ctx.fillStyle = `rgba(10,10,50,${alpha})`;
+  if (hour < 5) {
+    nightAlpha = 0.45;
+  } else if (hour < 6) {
+    // Dawn: transition from night blue to warm orange
+    nightAlpha = 0.45 * (1 - (hour - 5));
+    warmAlpha = 0.15 * (hour - 5);
+  } else if (hour < 7) {
+    warmAlpha = 0.15 * (1 - (hour - 6));
+  } else if (hour >= 18 && hour < 19.5) {
+    // Sunset: warm golden
+    warmAlpha = 0.12 * ((hour - 18) / 1.5);
+  } else if (hour >= 19.5 && hour < 21) {
+    // Dusk: warm fading to blue
+    warmAlpha = 0.12 * (1 - (hour - 19.5) / 1.5);
+    nightAlpha = 0.45 * ((hour - 19.5) / 1.5);
+  } else if (hour >= 21) {
+    nightAlpha = 0.45;
+  }
+
+  // Warm overlay (sunrise/sunset)
+  if (warmAlpha > 0.01) {
+    ctx.fillStyle = `rgba(200,120,50,${warmAlpha})`;
     ctx.fillRect(0, 0, canvasW, canvasH);
+  }
+
+  // Night overlay
+  if (nightAlpha > 0.01) {
+    ctx.fillStyle = `rgba(10,10,50,${nightAlpha})`;
+    ctx.fillRect(0, 0, canvasW, canvasH);
+
+    // Stars
+    if (nightAlpha > 0.2) {
+      ctx.save();
+      const starAlpha = (nightAlpha - 0.2) / 0.25;
+      for (let i = 0; i < 30; i++) {
+        const h = tileHash(i * 7, i * 13);
+        const sx = h % canvasW;
+        const sy = (h >> 10) % canvasH;
+        const twinkle = 0.3 + 0.7 * Math.abs(Math.sin(gt * 0.02 + i * 2.3));
+        ctx.globalAlpha = starAlpha * twinkle;
+        ctx.fillStyle = "#ffffff";
+        const size = 1 + (h % 2);
+        ctx.fillRect(sx, sy, size, size);
+      }
+      ctx.restore();
+    }
   }
 }
 
@@ -567,8 +733,14 @@ function drawMinimap(
   const my = canvasH - MINIMAP_SIZE - MINIMAP_PADDING;
   const scale = MINIMAP_SIZE / MAP_SIZE;
 
-  ctx.fillStyle = "rgba(0,0,0,0.5)";
-  ctx.fillRect(mx - 1, my - 1, MINIMAP_SIZE + 2, MINIMAP_SIZE + 2);
+  // Background
+  ctx.fillStyle = "rgba(0,0,0,0.65)";
+  ctx.fillRect(mx - 2, my - 2, MINIMAP_SIZE + 4, MINIMAP_SIZE + 4);
+
+  // Border
+  ctx.strokeStyle = "rgba(255,255,255,0.25)";
+  ctx.lineWidth = 1;
+  ctx.strokeRect(mx - 2, my - 2, MINIMAP_SIZE + 4, MINIMAP_SIZE + 4);
 
   for (let row = 0; row < MAP_SIZE; row++) {
     for (let col = 0; col < MAP_SIZE; col++) {
@@ -584,34 +756,28 @@ function drawMinimap(
     }
   }
 
+  // Agents (larger dots)
   for (const agent of world.agents) {
     ctx.fillStyle = agent.color;
-    ctx.fillRect(mx + agent.x * scale, my + agent.y * scale, 2, 2);
+    ctx.fillRect(mx + agent.x * scale - 0.5, my + agent.y * scale - 0.5, 3, 3);
   }
 
+  // Monsters
   for (const m of world.monsters) {
     if (!m.alive) continue;
     ctx.fillStyle = "#ff3333";
     ctx.fillRect(mx + m.x * scale, my + m.y * scale, 2, 2);
   }
 
+  // Viewport rect
   const ts = TILE_SIZE * camera.zoom;
   const vpX = camera.x - canvasW / (2 * ts);
   const vpY = camera.y - canvasH / (2 * ts);
   const vpW = canvasW / ts;
   const vpH = canvasH / ts;
-  ctx.strokeStyle = "#ffffff";
+  ctx.strokeStyle = "rgba(255,255,255,0.6)";
   ctx.lineWidth = 1;
   ctx.strokeRect(mx + vpX * scale, my + vpY * scale, vpW * scale, vpH * scale);
-}
-
-// --- Utility ---
-
-function lightenColor(hex: string, amount: number): string {
-  const r = Math.min(255, parseInt(hex.slice(1, 3), 16) + amount);
-  const g = Math.min(255, parseInt(hex.slice(3, 5), 16) + amount);
-  const b = Math.min(255, parseInt(hex.slice(5, 7), 16) + amount);
-  return `rgb(${r},${g},${b})`;
 }
 
 // --- Main render ---
@@ -628,7 +794,7 @@ export function renderWorld(
   ctx.fillStyle = "#111118";
   ctx.fillRect(0, 0, canvasW, canvasH);
 
-  drawTiles(ctx, world, camera, canvasW, canvasH);
+  drawTiles(ctx, world, camera, canvasW, canvasH, vs.globalTick);
   drawLocationLabels(ctx, world.locations, camera, canvasW, canvasH);
   drawInteractions(ctx, world, vs, camera, canvasW, canvasH);
   drawMonsters(
@@ -638,6 +804,7 @@ export function renderWorld(
     canvasW,
     canvasH,
     world.currentTick,
+    vs.globalTick,
   );
   drawAgents(
     ctx,
@@ -652,6 +819,6 @@ export function renderWorld(
   drawBubbles(ctx, vs, camera, canvasW, canvasH);
 
   const hour = tickToHour(world.currentTick, world.config.ticksPerDay);
-  drawNightOverlay(ctx, hour, canvasW, canvasH);
+  drawNightOverlay(ctx, hour, canvasW, canvasH, vs.globalTick);
   drawMinimap(ctx, world, camera, canvasW, canvasH);
 }

@@ -135,7 +135,7 @@ export function initWorldMode() {
 }
 
 export function destroyWorldMode() {
-  if (timerId !== null) clearInterval(timerId);
+  if (timerId !== null) clearTimeout(timerId);
   if (animFrameId !== null) cancelAnimationFrame(animFrameId);
   window.removeEventListener("keydown", onKeyDown);
   window.removeEventListener("resize", resizeCanvas);
@@ -182,67 +182,93 @@ function pauseSim() {
   startBtn.textContent = "재개";
   pauseBtn.style.display = "none";
   if (timerId !== null) {
-    clearInterval(timerId);
+    clearTimeout(timerId);
     timerId = null;
   }
 }
 
+// --- Time-based Speed ---
+
+const SPEED_LABELS: Record<string, string> = {
+  "0.25": "x4 빠르게",
+  "0.5": "x2 빠르게",
+  "1": "",
+  "4": "x4 느리게",
+};
+
+function getSpeedMultiplier(hour: number): number {
+  if (hour >= 22 || hour < 5) return 0.25;
+  if (hour >= 5 && hour < 7) return 0.5;
+  if (hour >= 12 && hour < 18) return 4.0;
+  return 1.0;
+}
+
 function restartTimer() {
-  if (timerId !== null) clearInterval(timerId);
-  const interval = +speedInput.value;
-  timerId = window.setInterval(() => {
-    // Snapshot positions before tick for lerp
-    snapshotPositions(vs, world.agents);
+  if (timerId !== null) clearTimeout(timerId);
+  const baseInterval = +speedInput.value;
 
-    const events = worldTick(world);
+  function scheduleTick() {
+    const hour = tickToHour(world.currentTick, world.config.ticksPerDay);
+    const multiplier = getSpeedMultiplier(hour);
+    const interval = baseInterval * multiplier;
 
-    // Update lerp targets after tick
-    for (const a of world.agents) {
-      const l = vs.lerps.get(a.id);
-      if (l) {
-        l.toX = a.x;
-        l.toY = a.y;
-      }
-    }
-    vs.lerpProgress = 0;
+    // Update speed label
+    const label = SPEED_LABELS[String(multiplier)] ?? `x${multiplier}`;
+    speedVal.textContent = `${(baseInterval / 1000).toFixed(1)}초${label ? ` (${label})` : ""}`;
 
-    // Add visual effects for events
-    for (const ev of events) {
-      const agent = world.agents.find((a) => a.id === ev.agentId);
-      if (!agent) continue;
+    timerId = window.setTimeout(() => {
+      snapshotPositions(vs, world.agents);
 
-      if (ev.type === "social") {
-        // Find the other agent mentioned in description
-        const other = world.agents.find(
-          (a) => a.id !== agent.id && ev.descriptionKo.includes(a.nameKo),
-        );
-        if (other) {
-          addInteraction(vs, agent.id, other.id, "#7c8aff");
+      const events = worldTick(world);
+
+      for (const a of world.agents) {
+        const l = vs.lerps.get(a.id);
+        if (l) {
+          l.toX = a.x;
+          l.toY = a.y;
         }
-        addBubble(vs, agent.x, agent.y, ev.descriptionKo, "💬", "#7c8aff");
-      } else if (ev.type === "combat") {
-        addBubble(vs, agent.x, agent.y, ev.descriptionKo, "⚔️", "#ff6b6b");
-      } else if (ev.type === "routine") {
-        addBubble(
-          vs,
-          agent.x,
-          agent.y,
-          ev.descriptionKo,
-          agent.emoji,
-          "#4ecdc4",
-        );
       }
-    }
+      vs.lerpProgress = 0;
 
-    updateTimeDisplay();
-    updateNpcList();
-    addEventsToLog(events);
-    if (world.selectedAgentId) renderNpcDetail();
-  }, interval);
+      for (const ev of events) {
+        const agent = world.agents.find((a) => a.id === ev.agentId);
+        if (!agent) continue;
+
+        if (ev.type === "social") {
+          const other = world.agents.find(
+            (a) => a.id !== agent.id && ev.descriptionKo.includes(a.nameKo),
+          );
+          if (other) {
+            addInteraction(vs, agent.id, other.id, "#7c8aff");
+          }
+          addBubble(vs, agent.x, agent.y, ev.descriptionKo, "💬", "#7c8aff");
+        } else if (ev.type === "combat") {
+          addBubble(vs, agent.x, agent.y, ev.descriptionKo, "⚔️", "#ff6b6b");
+        } else if (ev.type === "routine") {
+          addBubble(
+            vs,
+            agent.x,
+            agent.y,
+            ev.descriptionKo,
+            agent.emoji,
+            "#4ecdc4",
+          );
+        }
+      }
+
+      updateTimeDisplay();
+      updateNpcList();
+      addEventsToLog(events);
+      if (world.selectedAgentId) renderNpcDetail();
+
+      if (running) scheduleTick();
+    }, interval);
+  }
+  scheduleTick();
 }
 
 function resetWorld() {
-  if (timerId !== null) clearInterval(timerId);
+  if (timerId !== null) clearTimeout(timerId);
   running = false;
   timerId = null;
   world = createWorldState(AGENT_DEFS);
