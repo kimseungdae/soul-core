@@ -308,9 +308,11 @@ function processAgent(
     if (routineEvent) events.push(routineEvent);
   }
 
-  // Enforce sleep emoji
+  // Enforce state emoji
   if (agent.sleeping) {
     agent.emoji = "💤";
+  } else if (agent.currentGoal === "going_home") {
+    agent.emoji = "🏠";
   }
 
   return events;
@@ -346,10 +348,14 @@ function updateGoal(world: WorldState, agent: WorldAgent, hour: number) {
     return;
   }
 
+  // Wake up if sleeping and schedule starts
+  if (agent.sleeping || agent.currentGoal === "going_home") {
+    agent.sleeping = false;
+  }
+
   if (agent.currentGoal !== scheduled.activity) {
     agent.currentGoal = scheduled.activity;
     agent.currentGoalKo = scheduled.activityKo;
-    agent.sleeping = false;
     navigateTo(world, agent, scheduled.locationId);
   }
 }

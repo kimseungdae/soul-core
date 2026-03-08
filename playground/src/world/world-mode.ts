@@ -219,29 +219,15 @@ function restartTimer() {
         if (other) {
           addInteraction(vs, agent.id, other.id, "#7c8aff");
         }
-        addBubble(
-          vs,
-          agent.x,
-          agent.y,
-          ev.descriptionKo.slice(0, 20),
-          "💬",
-          "#7c8aff",
-        );
+        addBubble(vs, agent.x, agent.y, ev.descriptionKo, "💬", "#7c8aff");
       } else if (ev.type === "combat") {
-        addBubble(
-          vs,
-          agent.x,
-          agent.y,
-          ev.descriptionKo.slice(0, 20),
-          "⚔️",
-          "#ff6b6b",
-        );
+        addBubble(vs, agent.x, agent.y, ev.descriptionKo, "⚔️", "#ff6b6b");
       } else if (ev.type === "routine") {
         addBubble(
           vs,
           agent.x,
           agent.y,
-          ev.descriptionKo.slice(0, 15),
+          ev.descriptionKo,
           agent.emoji,
           "#4ecdc4",
         );
