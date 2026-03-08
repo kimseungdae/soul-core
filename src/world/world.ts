@@ -685,19 +685,53 @@ function processAgent(
   );
 
   if (nearbyMonster && !isInVillage(world, agent)) {
-    // High neuroticism → extra flee chance
+    const hasWeapon = agent.inventory.weapon > 0;
+    const wantsFight =
+      agent.currentGoal === "hunting_monster" ||
+      agent.currentGoal === "quest_hunt";
     const neuroFlee =
       agent.state.traits.bigFive.neuroticism > 0.7 && Math.random() < 0.3;
-    if (neuroFlee) {
-      navigateTo(world, agent, agent.homeLocationId);
-      agent.emoji = "😰";
+
+    // Flee: no weapon, neurotic, starving, or low HP (unless actively hunting with weapon)
+    const shouldFlee =
+      neuroFlee ||
+      (!hasWeapon && !wantsFight) ||
+      (!hasWeapon && agent.skills.combat < 0.5) ||
+      agent.hunger < 0.15 ||
+      agent.hp < 25;
+
+    if (shouldFlee) {
+      // Actually flee: teleport 3 tiles away from monster toward village center
+      const dx = agent.x - nearbyMonster.x;
+      const dy = agent.y - nearbyMonster.y;
+      const len = Math.max(1, Math.sqrt(dx * dx + dy * dy));
+      const fleeX = Math.max(
+        0,
+        Math.min(world.config.width - 1, Math.round(agent.x + (dx / len) * 3)),
+      );
+      const fleeY = Math.max(
+        0,
+        Math.min(world.config.height - 1, Math.round(agent.y + (dy / len) * 3)),
+      );
+      agent.x = fleeX;
+      agent.y = fleeY;
+      agent.path = [];
+      agent.pathIndex = 0;
+      agent.currentGoal = "idle";
+      agent.currentGoalKo = "자유 시간";
+      agent.emoji = "🏃";
+      const reason = !hasWeapon
+        ? "무기 없이"
+        : neuroFlee
+          ? "겁먹고"
+          : "위험해서";
       events.push(
         makeEvent(
           world,
           agent,
           hour,
           "combat",
-          `${agent.nameKo}이(가) ${nearbyMonster.nameKo}을(를) 보고 겁먹어 도망쳤다`,
+          `${agent.nameKo}이(가) ${reason} ${nearbyMonster.nameKo}에게서 도망쳤다`,
         ),
       );
       return events;
@@ -1069,7 +1103,9 @@ function scoreAllActions(
     });
   }
 
-  // 4. Monster hunting (warrior role + combat skill + HP)
+  // 4. Monster hunting (requires weapon OR high combat skill)
+  const hasWeaponForHunt = agent.inventory.weapon > 0;
+  const canFight = hasWeaponForHunt || agent.skills.combat >= 0.5;
   const nearestMonster = world.monsters
     .filter((m) => m.alive)
     .sort(
@@ -1077,16 +1113,17 @@ function scoreAllActions(
         distance({ x: agent.x, y: agent.y }, { x: a.x, y: a.y }) -
         distance({ x: agent.x, y: agent.y }, { x: b.x, y: b.y }),
     )[0];
-  if (nearestMonster && agent.hp > 40) {
+  if (nearestMonster && agent.hp > 40 && canFight) {
     const isWarrior =
       roles.includes("warrior") || roles.includes("guardian") ? 30 : 0;
+    const weaponBonus = hasWeaponForHunt ? 15 : 0;
     const combatScore = agent.skills.combat * 40;
     const hpBonus = agent.hp > 60 ? 10 : 0;
     candidates.push({
       goal: "hunting_monster",
       goalKo: `${nearestMonster.nameKo} 사냥하러 출발`,
       emoji: "⚔️",
-      score: combatScore + isWarrior + hpBonus,
+      score: combatScore + isWarrior + hpBonus + weaponBonus,
       execute: () => {
         agent.currentGoal = "hunting_monster";
         agent.currentGoalKo = `${nearestMonster.nameKo} 사냥하러 출발`;
@@ -1107,12 +1144,12 @@ function scoreAllActions(
       const monster = world.monsters.find(
         (m) => m.id === quest.targetMonsterId && m.alive,
       );
-      if (monster && agent.hp > 30) {
+      if (monster && agent.hp > 30 && canFight) {
         candidates.push({
           goal: "quest_hunt",
           goalKo: `📜 ${quest.targetNameKo} 토벌 중`,
           emoji: "⚔️",
-          score: 60 + agent.skills.combat * 20,
+          score: 60 + agent.skills.combat * 20 + (hasWeaponForHunt ? 15 : 0),
           execute: () => {
             agent.currentGoal = "quest_hunt";
             agent.currentGoalKo = `📜 ${quest.targetNameKo} 토벌 중`;
@@ -2801,8 +2838,22 @@ function handleCombat(
     }
     agent.emoji = agent.hp > 0 ? "⚔️" : "💫";
   } else {
-    // Flee (forced or chosen)
-    navigateTo(world, agent, agent.homeLocationId);
+    // Flee: teleport away from monster to break adjacency
+    const dx = agent.x - monster.x;
+    const dy = agent.y - monster.y;
+    const len = Math.max(1, Math.sqrt(dx * dx + dy * dy));
+    agent.x = Math.max(
+      0,
+      Math.min(world.config.width - 1, Math.round(agent.x + (dx / len) * 3)),
+    );
+    agent.y = Math.max(
+      0,
+      Math.min(world.config.height - 1, Math.round(agent.y + (dy / len) * 3)),
+    );
+    agent.path = [];
+    agent.pathIndex = 0;
+    agent.currentGoal = "idle";
+    agent.currentGoalKo = "자유 시간";
     descKo = forceFlee
       ? `${agent.nameKo}이(가) 무기 없이 ${monster.nameKo}에게서 도망쳤다`
       : `${agent.nameKo}이(가) ${monster.nameKo}에게서 도망쳤다`;
